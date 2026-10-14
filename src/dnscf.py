@@ -6,13 +6,12 @@ Cloudflare DNS 更新器
 """
 
 import ipaddress
-import json
 import re
 import sys
 import time
 import os
 
-import requests
+import httpx
 from cloudflare import Cloudflare
 from dotenv import load_dotenv
 
@@ -59,7 +58,7 @@ def get_cf_speed_test_ip(timeout=10, max_retries=5):
     """
     for attempt in range(max_retries):
         try:
-            response = requests.get(
+            response = httpx.get(
                 CF_YX_URL,
                 timeout=timeout
             )
@@ -228,18 +227,9 @@ def parse_ip_addresses(ip_str):
         print("错误: 未解析到有效 IP 地址")
         return None
 
-    # 去重处理：保持顺序的同时去除重复 IP
-    # 使用 dict.fromkeys() 利用 Python 3.7+ 字典保持插入顺序的特性
-    # 这比使用 set 更高效且能保持原始顺序
-    unique_valid_ips = list(dict.fromkeys(valid_ips))
-
-    # 记录去重信息
-    duplicate_count = len(valid_ips) - len(unique_valid_ips)
-    if duplicate_count > 0:
-        print(f"去重处理: 去除 {duplicate_count} 个重复 IP")
-
-    print(f"解析到 {len(unique_valid_ips)} 个有效 IP 地址")
-    return unique_valid_ips
+    # 候选已在 _extract_potential_ips 中去重，此处无需再次去重
+    print(f"解析到 {len(valid_ips)} 个有效 IP 地址")
+    return valid_ips
 
 def get_dns_records(name):
     """
@@ -408,9 +398,7 @@ def push_plus(content):
     }
 
     try:
-        body = json.dumps(data).encode(encoding='utf-8')
-        headers = {'Content-Type': 'application/json'}
-        requests.post(url, data=body, headers=headers, timeout=DEFAULT_TIMEOUT)
+        httpx.post(url, json=data, timeout=DEFAULT_TIMEOUT)
     except Exception as e:
         print(f"消息推送失败: {e}")
 

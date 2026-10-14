@@ -20,7 +20,7 @@ cf-yx-dns 是一个用于自动获取 Cloudflare 优选 IP 并更新 DNS 记录�
 | Python        | 3.10+              |
 | cloudflare    | Cloudflare API SDK |
 | python-dotenv | 环境变量管理       |
-| requests      | HTTP 请求库        |
+| httpx         | HTTP 请求库        |
 | uv            | Python 包管理工具  |
 
 ## 项目结构

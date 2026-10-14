@@ -144,14 +144,14 @@ class TestSyncDnsRecords:
 class TestGetCfSpeedTestIp:
     def test_success_first_try(self):
         resp = mock.Mock(status_code=200, text="1.2.3.4")
-        with mock.patch("dnscf.requests.get", return_value=resp), \
+        with mock.patch("dnscf.httpx.get", return_value=resp), \
              mock.patch("dnscf.time.sleep") as sleep_mock:
             assert dnscf.get_cf_speed_test_ip() == "1.2.3.4"
         sleep_mock.assert_not_called()
 
     def test_retries_on_non_200_then_none(self):
         resp = mock.Mock(status_code=503, text="")
-        with mock.patch("dnscf.requests.get", return_value=resp), \
+        with mock.patch("dnscf.httpx.get", return_value=resp), \
              mock.patch("dnscf.time.sleep") as sleep_mock:
             assert dnscf.get_cf_speed_test_ip(max_retries=3) is None
         # 最后一次失败后不再等待
@@ -159,7 +159,7 @@ class TestGetCfSpeedTestIp:
 
     def test_exponential_backoff(self):
         resp = mock.Mock(status_code=500, text="")
-        with mock.patch("dnscf.requests.get", return_value=resp), \
+        with mock.patch("dnscf.httpx.get", return_value=resp), \
              mock.patch("dnscf.time.sleep") as sleep_mock:
             dnscf.get_cf_speed_test_ip(max_retries=4)
         assert [c.args[0] for c in sleep_mock.call_args_list] == [1, 2, 4]
@@ -167,7 +167,7 @@ class TestGetCfSpeedTestIp:
     def test_success_after_retry(self):
         bad = mock.Mock(status_code=500, text="")
         good = mock.Mock(status_code=200, text="1.2.3.4")
-        with mock.patch("dnscf.requests.get", side_effect=[bad, good]), \
+        with mock.patch("dnscf.httpx.get", side_effect=[bad, good]), \
              mock.patch("dnscf.time.sleep"):
             assert dnscf.get_cf_speed_test_ip() == "1.2.3.4"
 
