@@ -266,6 +266,8 @@ def get_dns_records(name):
                 'content': record.content,
                 'comment': record.comment,
             })
+            # 输出现有记录详情，便于在日志中直接核对 DNS 当前指向
+            print(f"现有记录: {record.type} {record.name} -> {record.content} (comment: {record.comment})")
         # 当前获取的总记录数
         current_count += len(page.result)
         # 总记录数
@@ -370,6 +372,8 @@ def sync_dns_records(name, new_ips):
     to_create, to_delete = _compute_diff(existing_records, new_ips)
 
     print(f"待新增 {len(to_create)} 条，待删除 {len(to_delete)} 条")
+    if not to_create and not to_delete:
+        print(f"{name} 的 DNS 记录已与优选 IP 一致，无需更新")
 
     success_messages = []
     error_messages = []
@@ -439,6 +443,9 @@ def main(argv=None) -> int:
     if not all([CF_API_TOKEN, CF_ZONE_ID, CF_DNS_NAME]):
         print("错误: 缺少必要的环境变量 (CF_API_TOKEN, CF_ZONE_ID, CF_DNS_NAME)", file=sys.stderr)
         return 1
+
+    # 打印同步目标，便于核对实际使用的域名（尤其注意 GitHub Secrets 与本地 .env 是否一致）
+    print(f"同步目标域名: {CF_DNS_NAME}")
 
     # 获取最新优选 IP
     ip_addresses_str = get_cf_speed_test_ip()

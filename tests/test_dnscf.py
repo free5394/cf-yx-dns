@@ -130,6 +130,15 @@ class TestSyncDnsRecords:
         del_mock.assert_not_called()
         assert success == [] and errors == []
 
+    def test_noop_prints_fresh_hint(self, capsys):
+        """无差量时应输出明确的"无需更新"提示，避免误判为未执行"""
+        with mock.patch.object(dnscf, "get_dns_records", return_value=EXISTING_RECORDS):
+            dnscf.sync_dns_records("t", ["1.1.1.1", "2.2.2.2", "3.3.3.3"])
+
+        out = capsys.readouterr().out
+        assert "待新增 0 条，待删除 0 条" in out
+        assert "无需更新" in out
+
     def test_get_records_failure_reported(self):
         with mock.patch.object(dnscf, "get_dns_records", side_effect=RuntimeError("认证失败")):
             success, errors = dnscf.sync_dns_records("t", ["1.2.3.4"])
