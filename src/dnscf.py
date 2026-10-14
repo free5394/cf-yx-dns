@@ -444,8 +444,8 @@ def main(argv=None) -> int:
         print("错误: 缺少必要的环境变量 (CF_API_TOKEN, CF_ZONE_ID, CF_DNS_NAME)", file=sys.stderr)
         return 1
 
-    # 打印同步目标，便于核对实际使用的域名（尤其注意 GitHub Secrets 与本地 .env 是否一致）
-    print(f"同步目标域名: {CF_DNS_NAME}")
+    # 打印同步目标，便于核对实际使用的域名与 Zone（尤其注意 GitHub Secrets 与本地 .env 是否一致）
+    print(f"同步目标域名: {CF_DNS_NAME}（Zone: {CF_ZONE_ID}）")
 
     # 获取最新优选 IP
     ip_addresses_str = get_cf_speed_test_ip()
