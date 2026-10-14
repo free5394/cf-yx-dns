@@ -1,56 +1,56 @@
 name: "dns_cf_push"
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
-  schedule:
-    - cron: "0 */6 * * *"
-  workflow_dispatch:
+    schedule:
+        - cron: "0 */6 * * *"
+    workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      actions: write
+    build:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            actions: write
 
-    steps:
-      - name: "Checkout"
-        uses: actions/checkout@v6
+        steps:
+            - name: "Checkout"
+              uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - name: 安装 uv
-        uses: astral-sh/setup-uv@v8.1.0
+            - name: 安装 uv
+              uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
 
-      - name: 安装项目
-        run: uv sync --locked --all-extras --dev
+            - name: 安装项目
+              run: uv sync --locked --dev
 
-      - name: "run dnscf"
-        env:
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
-          CF_DNS_NAME: ${{ secrets.CF_DNS_NAME }}
-          CF_YX_URL: ${{ secrets.CF_YX_URL }}
-          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-        run: uv run src/dnscf.py
+            - name: "run dnscf"
+              env:
+                  CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+                  CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+                  CF_DNS_NAME: ${{ secrets.CF_DNS_NAME }}
+                  CF_YX_URL: ${{ secrets.CF_YX_URL }}
+                  PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+              run: uv run src/dnscf.py
 
-      - name: 失败时推送告警
-        if: failure()
-        env:
-          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-        run: |
-          if [ -z "$PUSHPLUS_TOKEN" ]; then
-            echo "PUSHPLUS_TOKEN 未配置，跳过失败告警"
-            exit 0
-          fi
-          curl -s -X POST "https://www.pushplus.plus/send" \
-            -H "Content-Type: application/json" \
-            -d "{\"token\":\"$PUSHPLUS_TOKEN\",\"title\":\"cf-yx-dns DNS 更新失败\",\"content\":\"DNS 更新任务执行失败，请检查 Actions 日志\",\"template\":\"markdown\"}"
+            - name: 失败时推送告警
+              if: failure()
+              env:
+                  PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+              run: |
+                  if [ -z "$PUSHPLUS_TOKEN" ]; then
+                    echo "PUSHPLUS_TOKEN 未配置，跳过失败告警"
+                    exit 0
+                  fi
+                  curl -s -X POST "https://www.pushplus.plus/send" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"token\":\"$PUSHPLUS_TOKEN\",\"title\":\"cf-yx-dns DNS 更新失败\",\"content\":\"DNS 更新任务执行失败，请检查 Actions 日志\",\"template\":\"markdown\"}"
 
-      - name: Delete old workflow runs
-        uses: Mattraks/delete-workflow-runs@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository }}
-          retain_days: 7
-          keep_minimum_runs: 1
+            - name: Delete old workflow runs
+              uses: Mattraks/delete-workflow-runs@0cf693bc9909e5e867ee8f27b813224ba862939c # v2
+              with:
+                  token: ${{ secrets.GITHUB_TOKEN }}
+                  repository: ${{ github.repository }}
+                  retain_days: 7
+                  keep_minimum_runs: 1
