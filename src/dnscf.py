@@ -9,7 +9,6 @@ import ipaddress
 import json
 import re
 import sys
-import traceback
 import time
 import os
 
@@ -28,19 +27,28 @@ CF_YX_URL = os.environ.get("CF_YX_URL") or "https://ip.164746.xyz/ipTop.html"
 # pushplus_token
 PUSHPLUS_TOKEN = os.environ.get("PUSHPLUS_TOKEN")
 
-# 请求头
-HEADERS = {
-    'Authorization': f'Bearer {CF_API_TOKEN}',
-    'Content-Type': 'application/json'
-}
-
 # 默认超时时间（秒）
 DEFAULT_TIMEOUT = 30
+
+# Cloudflare 客户端（惰性单例，避免每次操作重复创建）
+_client = None
+
+
+def _get_client():
+    """
+    获取 Cloudflare 客户端
+    """
+    global _client
+    if _client is None:
+        _client = Cloudflare(api_token=CF_API_TOKEN)
+    return _client
 
 
 def get_cf_speed_test_ip(timeout=10, max_retries=5):
     """
     获取 Cloudflare 优选 IP
+
+    请求失败（异常或非 200 状态码）时按指数退避重试。
 
     Args:
         timeout: 单次请求超时时间
@@ -57,10 +65,12 @@ def get_cf_speed_test_ip(timeout=10, max_retries=5):
             )
             if response.status_code == 200:
                 return response.text
+            print(f"获取优选 IP 失败 (尝试 {attempt + 1}/{max_retries}): HTTP {response.status_code}")
         except Exception as e:
             print(f"获取优选 IP 失败 (尝试 {attempt + 1}/{max_retries}): {e}")
-            if attempt == max_retries - 1:
-                traceback.print_exc()
+        # 指数退避: 1s, 2s, 4s, 8s，最后一次失败后不再等待
+        if attempt < max_retries - 1:
+            time.sleep(2 ** attempt)
     return None
 
 def _is_valid_ip(ip_str):
@@ -241,9 +251,7 @@ def get_dns_records(name):
     Returns:
         记录字典列表（包含 id, name, type, content, comment），失败返回空列表
     """
-    client = Cloudflare(
-        api_token=CF_API_TOKEN,
-    )
+    client = _get_client()
     current_page = 0
     current_count = 0
     total_count = 0
@@ -289,12 +297,10 @@ def add_dns_record(name, cf_ip):
     """
     if not name or not cf_ip:
         print("错误: 缺少必要的参数 (name, cf_ip)")
-        return
+        return f"ip:{cf_ip} 新增 {name} 失败 - 缺少参数"
 
     current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-    client = Cloudflare(
-        api_token=CF_API_TOKEN,
-    )
+    client = _get_client()
 
     ip_type = _get_ip_type(cf_ip)
     if not ip_type:
@@ -327,31 +333,12 @@ def del_dns_record(record_id):
         print("错误: 缺少必要的参数 (record_id)")
         return
 
-    client = Cloudflare(
-        api_token=CF_API_TOKEN,
-    )
+    client = _get_client()
     record = client.dns.records.delete(
         dns_record_id=record_id,
         zone_id=CF_ZONE_ID,
     )
     return record
-
-def del_dns_records(records):
-    """
-    删除多个 DNS 记录
-
-    Args:
-        records: 包含 DNS 记录 ID 的列表
-
-    Returns:
-        操作结果字符串
-    """
-    if not records:
-        print("错误: 缺少必要的参数 (records)")
-        return
-
-    for record in records:
-        del_dns_record(record['id'])
 
 def sync_dns_records(name, new_ips):
     """

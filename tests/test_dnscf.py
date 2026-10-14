@@ -139,6 +139,51 @@ class TestSyncDnsRecords:
         assert "认证失败" in errors[0]
 
 
+# ---------- 优选 IP 获取与重试 ----------
+
+class TestGetCfSpeedTestIp:
+    def test_success_first_try(self):
+        resp = mock.Mock(status_code=200, text="1.2.3.4")
+        with mock.patch("dnscf.requests.get", return_value=resp), \
+             mock.patch("dnscf.time.sleep") as sleep_mock:
+            assert dnscf.get_cf_speed_test_ip() == "1.2.3.4"
+        sleep_mock.assert_not_called()
+
+    def test_retries_on_non_200_then_none(self):
+        resp = mock.Mock(status_code=503, text="")
+        with mock.patch("dnscf.requests.get", return_value=resp), \
+             mock.patch("dnscf.time.sleep") as sleep_mock:
+            assert dnscf.get_cf_speed_test_ip(max_retries=3) is None
+        # 最后一次失败后不再等待
+        assert sleep_mock.call_count == 2
+
+    def test_exponential_backoff(self):
+        resp = mock.Mock(status_code=500, text="")
+        with mock.patch("dnscf.requests.get", return_value=resp), \
+             mock.patch("dnscf.time.sleep") as sleep_mock:
+            dnscf.get_cf_speed_test_ip(max_retries=4)
+        assert [c.args[0] for c in sleep_mock.call_args_list] == [1, 2, 4]
+
+    def test_success_after_retry(self):
+        bad = mock.Mock(status_code=500, text="")
+        good = mock.Mock(status_code=200, text="1.2.3.4")
+        with mock.patch("dnscf.requests.get", side_effect=[bad, good]), \
+             mock.patch("dnscf.time.sleep"):
+            assert dnscf.get_cf_speed_test_ip() == "1.2.3.4"
+
+
+# ---------- 客户端单例 ----------
+
+class TestClientSingleton:
+    def test_reuse_single_instance(self):
+        with mock.patch.object(dnscf, "_client", None), \
+             mock.patch.object(dnscf, "Cloudflare") as cf_mock:
+            c1 = dnscf._get_client()
+            c2 = dnscf._get_client()
+            assert c1 is c2
+            cf_mock.assert_called_once()
+
+
 # ---------- main 退出码 ----------
 
 class TestMainExitCode:
