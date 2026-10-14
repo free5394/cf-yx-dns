@@ -9,7 +9,7 @@ cf-yx-dns 是一个用于自动获取 Cloudflare 优选 IP 并更新 DNS 记录�
 ## 核心功能
 
 - **自动获取优选 IP**：从第三方服务采集最新的 Cloudflare 优选 IP 列表
-- **智能 DNS 管理**：自动删除旧 DNS 记录，创建新的 DNS 记录
+- **智能 DNS 管理**：差量比对现有记录，先新增缺失记录再删除多余记录，更新过程不中断解析
 - **消息推送**：通过 PushPlus 发送微信推送通知，实时掌握执行状态
 - **自动化执行**：支持 GitHub Actions 定时任务，实现无人值守运行
 
@@ -17,7 +17,7 @@ cf-yx-dns 是一个用于自动获取 Cloudflare 优选 IP 并更新 DNS 记录�
 
 | 组件          | 说明               |
 | ------------- | ------------------ |
-| Python        | 3.14+              |
+| Python        | 3.10+              |
 | cloudflare    | Cloudflare API SDK |
 | python-dotenv | 环境变量管理       |
 | requests      | HTTP 请求库        |
@@ -45,7 +45,7 @@ cf-yx-dns 是一个用于自动获取 Cloudflare 优选 IP 并更新 DNS 记录�
 
 ### 环境要求
 
-- Python 3.14 或更高版本
+- Python 3.10 或更高版本
 - uv 包管理工具
 
 ### 本地安装
@@ -56,7 +56,7 @@ git clone https://github.com/free5394/cf-yx-dns.git
 cd cf-yx-dns
 
 # 安装依赖
-uv sync --locked --all-extras --dev
+uv sync --locked --dev
 
 # 复制环境变量模板
 cp .env.example .env
@@ -100,7 +100,7 @@ PUSHPLUS_TOKEN=your_pushplus_token
 2. 进入 **My Profile** → **API Tokens**
 3. 点击 **Create Token** → **Create Custom Token**
 4. 配置以下权限：
-   - `Zone` → `DNS` → `Edit`
+    - `Zone` → `DNS` → `Edit`
 5. 创建成功后复制 Token
 
 ### Zone ID 获取
@@ -121,12 +121,6 @@ PUSHPLUS_TOKEN=your_pushplus_token
 
 ```bash
 uv run src/dnscf.py
-```
-
-### 查看帮助
-
-```bash
-uv run src/dnscf.py --help
 ```
 
 ### GitHub Actions 自动执行
@@ -157,19 +151,17 @@ uv run src/dnscf.py --help
          ▼
 ┌─────────────────┐
 │  获取现有 DNS   │
-│    记录列表      │
+│  记录并计算差量  │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│  删除旧 DNS     │
-│    记录         │
+│  先新增缺失记录  │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│  创建新 DNS     │
-│    记录         │
+│  再删除多余记录  │
 └────────┬────────┘
          │
          ▼
@@ -207,13 +199,10 @@ uv run src/dnscf.py --help
 
 ```bash
 # 安装开发依赖
-uv sync --locked --all-extras --dev
+uv sync --locked --dev
 
 # 运行测试
 uv run pytest
-
-# 代码格式化
-uv run black src/
 ```
 
 ## 许可证
