@@ -301,7 +301,7 @@ def add_dns_record(name, cf_ip):
         print(f"错误: 无效的 IP 地址: {cf_ip}")
         return f"ip:{cf_ip} 解析 {name} 失败 - 无效 IP 地址"
 
-    record_response = client.dns.records.create(
+    client.dns.records.create(
         zone_id=CF_ZONE_ID,
         name=name,
         content=cf_ip,
@@ -309,12 +309,9 @@ def add_dns_record(name, cf_ip):
         type=ip_type,
         comment=f"{current_time}",
     )
-    if record_response:
-        print(f"dns add success: ---- Time: {current_time} ---- ip：{cf_ip}")
-        return f"ip:{cf_ip} 解析 {name} 成功"
-    else:
-        print(f"dns add ERROR: ---- Time: {current_time} ---- ip：{cf_ip} ---- MESSAGE: {record_response.errors}")
-        return f"ip:{cf_ip} 解析 {name} 失败"
+    # SDK 在 API 错误时抛出 cloudflare.APIError，由调用方（sync_dns_records）统一捕获
+    print(f"dns add success: ---- Time: {current_time} ---- ip:{cf_ip}")
+    return f"ip:{cf_ip} 解析 {name} 成功"
 
 def del_dns_record(record_id):
     """
@@ -370,7 +367,11 @@ def sync_dns_records(name, new_ips):
     Returns:
         tuple: (成功消息列表, 失败消息列表)
     """
-    existing_records = get_dns_records(name) or []
+    try:
+        existing_records = get_dns_records(name) or []
+    except Exception as e:
+        print(f"获取现有 DNS 记录失败: {e}", file=sys.stderr)
+        return [], [f"获取 {name} 现有 DNS 记录失败 - {e}"]
     existing_contents = {record['content'] for record in existing_records}
     target_ips = list(dict.fromkeys(new_ips))
 
@@ -410,7 +411,7 @@ def push_plus(content):
         print("PUSHPLUS_TOKEN 未设置，跳过消息推送")
         return
 
-    url = 'http://www.pushplus.plus/send'
+    url = 'https://www.pushplus.plus/send'
     data = {
         "token": PUSHPLUS_TOKEN,
         "title": "IP优选DNSCF推送",
