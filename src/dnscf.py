@@ -8,6 +8,7 @@ Cloudflare DNS 更新器
 import ipaddress
 import json
 import re
+import sys
 import traceback
 import time
 import os
@@ -355,6 +356,49 @@ def del_dns_records(records):
     for record in records:
         del_dns_record(record['id'])
 
+def sync_dns_records(name, new_ips):
+    """
+    差量同步 DNS 记录：先新增缺失的记录，再删除多余的旧记录
+
+    采用"先增后删"的顺序，保证同步过程中该域名始终保有可用的解析记录，
+    避免因中途失败导致解析中断。
+
+    Args:
+        name: DNS 记录名称
+        new_ips: 目标 IP 地址列表
+
+    Returns:
+        tuple: (成功消息列表, 失败消息列表)
+    """
+    existing_records = get_dns_records(name) or []
+    existing_contents = {record['content'] for record in existing_records}
+    target_ips = list(dict.fromkeys(new_ips))
+
+    to_create = [ip for ip in target_ips if ip not in existing_contents]
+    to_delete = [record for record in existing_records if record['content'] not in target_ips]
+
+    print(f"待新增 {len(to_create)} 条，待删除 {len(to_delete)} 条")
+
+    success_messages = []
+    error_messages = []
+
+    # 先新增，确保任意时刻都存在可用记录
+    for ip in to_create:
+        try:
+            success_messages.append(add_dns_record(name, ip))
+        except Exception as e:
+            error_messages.append(f"ip:{ip} 新增 {name} 失败 - {e}")
+
+    # 再删除多余的旧记录
+    for record in to_delete:
+        try:
+            del_dns_record(record['id'])
+            success_messages.append(f"ip:{record['content']} 删除旧记录成功")
+        except Exception as e:
+            error_messages.append(f"ip:{record['content']} 删除旧记录失败 - {e}")
+
+    return success_messages, error_messages
+
 def push_plus(content):
     """
     发送 PushPlus 消息推送
@@ -382,44 +426,45 @@ def push_plus(content):
     except Exception as e:
         print(f"消息推送失败: {e}")
 
-def main():
-    """主函数"""
+def main() -> int:
+    """主函数
+
+    Returns:
+        int: 0 表示全部成功，1 表示存在失败
+    """
     # 检查必要的环境变量
     if not all([CF_API_TOKEN, CF_ZONE_ID, CF_DNS_NAME]):
-        print("错误: 缺少必要的环境变量 (CF_API_TOKEN, CF_ZONE_ID, CF_DNS_NAME)")
-        return
+        print("错误: 缺少必要的环境变量 (CF_API_TOKEN, CF_ZONE_ID, CF_DNS_NAME)", file=sys.stderr)
+        return 1
 
     # 获取最新优选 IP
     ip_addresses_str = get_cf_speed_test_ip()
     if not ip_addresses_str:
-        print("错误: 无法获取优选 IP")
-        return
+        print("错误: 无法获取优选 IP", file=sys.stderr)
+        return 1
 
     ip_addresses = parse_ip_addresses(ip_addresses_str)
     if not ip_addresses:
-        print("错误: 未解析到有效 IP 地址")
-        return
+        print("错误: 未解析到有效 IP 地址", file=sys.stderr)
+        return 1
 
     for index, ip_address in enumerate(ip_addresses):
         print(f"{index}: {ip_address}")
 
-    # 获取 DNS 记录
-    dns_records = get_dns_records(CF_DNS_NAME) or []
-    # 更新 DNS 记录
-    push_plus_content = []
-    # 删除之前存在的 DNS 记录
-    for index, ip_address in enumerate(dns_records):
-        dns = del_dns_record(dns_records[index]['id'])
-
-    # 新增 新获取的 DNS 记录
-    for index, ip_address in enumerate(ip_addresses):
-        dns = add_dns_record(CF_DNS_NAME, ip_address)
-        push_plus_content.append(dns)
+    # 差量同步 DNS 记录（先新增缺失记录，再删除多余旧记录）
+    success_messages, error_messages = sync_dns_records(CF_DNS_NAME, ip_addresses)
 
     # 发送推送
+    push_plus_content = success_messages + [f"失败: {message}" for message in error_messages]
     if push_plus_content:
         print(push_plus_content)
         push_plus('\n'.join(push_plus_content))
 
+    if error_messages:
+        print(f"错误: 存在 {len(error_messages)} 项 DNS 操作失败", file=sys.stderr)
+        return 1
+
+    return 0
+
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
