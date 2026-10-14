@@ -52,7 +52,7 @@ cf-yx-dns 是一个用于自动获取 Cloudflare 优选 IP 并更新 DNS 记录�
 
 ```bash
 # 克隆项目
-git clone https://github.com/opal1237/cf-yx-dns.git
+git clone https://github.com/free5394/cf-yx-dns.git
 cd cf-yx-dns
 
 # 安装依赖
@@ -227,4 +227,4 @@ uv run black src/
 
 ## Star History
 
-![Star History Chart](https://api.star-history.com/svg?repos=opal1237/cf-yx-dns&type=Timeline)
+![Star History Chart](https://api.star-history.com/svg?repos=free5394/cf-yx-dns&type=Timeline)
