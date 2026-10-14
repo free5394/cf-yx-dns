@@ -5,6 +5,7 @@ Cloudflare DNS 更新器
 获取优选 IP 并更新 Cloudflare DNS 记录
 """
 
+import argparse
 import ipaddress
 import re
 import sys
@@ -330,6 +331,23 @@ def del_dns_record(record_id):
     )
     return record
 
+def _compute_diff(existing_records, new_ips):
+    """
+    计算差量：需要新增的 IP 与需要删除的记录
+
+    Args:
+        existing_records: 现有 DNS 记录列表
+        new_ips: 目标 IP 地址列表
+
+    Returns:
+        tuple: (待新增 IP 列表, 待删除记录列表)
+    """
+    existing_contents = {record['content'] for record in existing_records}
+    target_ips = list(dict.fromkeys(new_ips))
+    to_create = [ip for ip in target_ips if ip not in existing_contents]
+    to_delete = [record for record in existing_records if record['content'] not in target_ips]
+    return to_create, to_delete
+
 def sync_dns_records(name, new_ips):
     """
     差量同步 DNS 记录：先新增缺失的记录，再删除多余的旧记录
@@ -349,11 +367,7 @@ def sync_dns_records(name, new_ips):
     except Exception as e:
         print(f"获取现有 DNS 记录失败: {e}", file=sys.stderr)
         return [], [f"获取 {name} 现有 DNS 记录失败 - {e}"]
-    existing_contents = {record['content'] for record in existing_records}
-    target_ips = list(dict.fromkeys(new_ips))
-
-    to_create = [ip for ip in target_ips if ip not in existing_contents]
-    to_delete = [record for record in existing_records if record['content'] not in target_ips]
+    to_create, to_delete = _compute_diff(existing_records, new_ips)
 
     print(f"待新增 {len(to_create)} 条，待删除 {len(to_delete)} 条")
 
@@ -402,12 +416,25 @@ def push_plus(content):
     except Exception as e:
         print(f"消息推送失败: {e}")
 
-def main() -> int:
+def main(argv=None) -> int:
     """主函数
+
+    Args:
+        argv: 命令行参数列表，None 时读取 sys.argv
 
     Returns:
         int: 0 表示全部成功，1 表示存在失败
     """
+    parser = argparse.ArgumentParser(
+        description="Cloudflare DNS 优选 IP 自动更新工具"
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="演练模式：仅显示将要新增/删除的记录，不实际修改 DNS",
+    )
+    args = parser.parse_args(argv)
+
     # 检查必要的环境变量
     if not all([CF_API_TOKEN, CF_ZONE_ID, CF_DNS_NAME]):
         print("错误: 缺少必要的环境变量 (CF_API_TOKEN, CF_ZONE_ID, CF_DNS_NAME)", file=sys.stderr)
@@ -426,6 +453,18 @@ def main() -> int:
 
     for index, ip_address in enumerate(ip_addresses):
         print(f"{index}: {ip_address}")
+
+    # 演练模式：仅展示差量，不实际修改 DNS 记录
+    if args.dry_run:
+        try:
+            existing_records = get_dns_records(CF_DNS_NAME) or []
+        except Exception as e:
+            print(f"获取现有 DNS 记录失败: {e}", file=sys.stderr)
+            return 1
+        to_create, to_delete = _compute_diff(existing_records, ip_addresses)
+        print(f"[演练模式] 将新增 {len(to_create)} 条: {to_create}")
+        print(f"[演练模式] 将删除 {len(to_delete)} 条: {[r['content'] for r in to_delete]}")
+        return 0
 
     # 差量同步 DNS 记录（先新增缺失记录，再删除多余旧记录）
     success_messages, error_messages = sync_dns_records(CF_DNS_NAME, ip_addresses)

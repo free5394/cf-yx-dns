@@ -139,6 +139,19 @@ class TestSyncDnsRecords:
         assert "认证失败" in errors[0]
 
 
+# ---------- 差量计算 ----------
+
+class TestComputeDiff:
+    def test_diff_sets(self):
+        to_create, to_delete = dnscf._compute_diff(EXISTING_RECORDS, ["2.2.2.2", "4.4.4.4"])
+        assert to_create == ["4.4.4.4"]
+        assert [r["id"] for r in to_delete] == ["r1", "r3"]
+
+    def test_identical_means_empty_diff(self):
+        to_create, to_delete = dnscf._compute_diff(EXISTING_RECORDS, ["1.1.1.1", "2.2.2.2", "3.3.3.3"])
+        assert to_create == [] and to_delete == []
+
+
 # ---------- 优选 IP 获取与重试 ----------
 
 class TestGetCfSpeedTestIp:
@@ -189,12 +202,12 @@ class TestClientSingleton:
 class TestMainExitCode:
     def test_missing_env_returns_1(self):
         with mock.patch.object(dnscf, "CF_API_TOKEN", None):
-            assert dnscf.main() == 1
+            assert dnscf.main([]) == 1
 
     def test_fetch_failure_returns_1(self):
         env = mock.patch.multiple(dnscf, **ENV_OK)
         with env, mock.patch.object(dnscf, "get_cf_speed_test_ip", lambda *a, **k: None):
-            assert dnscf.main() == 1
+            assert dnscf.main([]) == 1
 
     def test_success_returns_0(self):
         env = mock.patch.multiple(dnscf, **ENV_OK)
@@ -204,7 +217,7 @@ class TestMainExitCode:
              mock.patch.object(dnscf, "get_dns_records", return_value=[]), \
              mock.patch.object(dnscf, "add_dns_record", lambda n, ip: f"ip:{ip} 解析 {n} 成功"), \
              mock.patch.object(dnscf, "push_plus", lambda content: None):
-            assert dnscf.main() == 0
+            assert dnscf.main([]) == 0
 
     def test_operation_failure_returns_1(self):
         def boom(name, ip):
@@ -217,4 +230,19 @@ class TestMainExitCode:
              mock.patch.object(dnscf, "get_dns_records", return_value=[]), \
              mock.patch.object(dnscf, "add_dns_record", boom), \
              mock.patch.object(dnscf, "push_plus", lambda content: None):
-            assert dnscf.main() == 1
+            assert dnscf.main([]) == 1
+
+    def test_dry_run_no_mutation(self):
+        env = mock.patch.multiple(dnscf, **ENV_OK)
+        with env, \
+             mock.patch.object(dnscf, "get_cf_speed_test_ip", lambda *a, **k: "1.2.3.4"), \
+             mock.patch.object(dnscf, "parse_ip_addresses", lambda s: ["1.2.3.4", "4.4.4.4"]), \
+             mock.patch.object(dnscf, "get_dns_records", return_value=EXISTING_RECORDS), \
+             mock.patch.object(dnscf, "add_dns_record") as add_mock, \
+             mock.patch.object(dnscf, "del_dns_record") as del_mock, \
+             mock.patch.object(dnscf, "push_plus") as push_mock:
+            assert dnscf.main(["--dry-run"]) == 0
+        # 演练模式不产生任何写操作与推送
+        add_mock.assert_not_called()
+        del_mock.assert_not_called()
+        push_mock.assert_not_called()

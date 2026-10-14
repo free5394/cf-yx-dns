@@ -123,6 +123,13 @@ PUSHPLUS_TOKEN=your_pushplus_token
 uv run src/dnscf.py
 ```
 
+### 演练模式
+
+```bash
+# 仅显示将要新增/删除的 DNS 记录，不实际修改
+uv run src/dnscf.py --dry-run
+```
+
 ### GitHub Actions 自动执行
 
 部署完成后，DNS 更新任务将自动按以下规则执行：
