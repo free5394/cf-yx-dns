@@ -92,6 +92,27 @@ class TestCanonicalize:
         assert ips.canonicalize(text) is None
 
 
+class TestIsUsableCloudflareIpv6:
+    """Cloudflare 公网 IPv6 段的 is_usable 回归钉。
+
+    实证记录见 ``ips.is_usable`` 文档：3.10/3.12/3.14 下各公网段 is_global 均为 True；
+    换运行时或升级 Python 时先跑这里，差异不会悄然破坏同步。
+    """
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "2606:4700::1",              # Cloudflare 主段 2606:4700::/32
+            "2606:4700:4700::1111",      # 1.1.1.1 的 IPv6 邻居
+            "2400:cb00:2049:1::a29f:1804",  # APNIC 段 2400:cb00::/32
+            "2803:f800:50::1",           # LACNIC 段
+            "2a06:98c0::1",              # AFRINIC 段
+        ],
+    )
+    def test_cloudflare_public_ipv6_usable(self, text):
+        assert ips.is_usable(ipaddress.ip_address(text)) is True
+
+
 class TestRecordType:
     def test_ipv4(self):
         assert ips.record_type(ipaddress.ip_address("104.16.1.1")) == "A"

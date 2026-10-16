@@ -38,6 +38,8 @@ cf-yx-dns 是一个用于自动获取 Cloudflare 优选 IP 并更新 DNS 记录�
 │   └── agents/             # 面向编码代理的说明
 ├── src/
 │   ├── cf_yx_dns/          # 实现包
+│   │   ├── __init__.py     # 包标识
+│   │   ├── __main__.py     # python -m cf_yx_dns 入口
 │   │   ├── cli.py          # 命令行入口（--dry-run / --check / --notify-failure）
 │   │   ├── config.py       # 环境变量读取
 │   │   ├── ips.py          # 优选 IP 抓取、提取与校验
