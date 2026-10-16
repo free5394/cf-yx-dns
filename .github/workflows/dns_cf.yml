@@ -8,6 +8,11 @@ on:
         - cron: "23 */6 * * *"
     workflow_dispatch:
 
+# 定时任务与手动触发可能重叠；排队执行而不是并发，避免两轮同步互相踩到差量计算
+concurrency:
+    group: dns_cf_push
+    cancel-in-progress: false
+
 jobs:
     build:
         runs-on: ubuntu-latest
@@ -38,14 +43,9 @@ jobs:
               if: failure()
               env:
                   PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-              run: |
-                  if [ -z "$PUSHPLUS_TOKEN" ]; then
-                    echo "PUSHPLUS_TOKEN 未配置，跳过失败告警"
-                    exit 0
-                  fi
-                  curl -s -X POST "https://www.pushplus.plus/send" \
-                    -H "Content-Type: application/json" \
-                    -d "{\"token\":\"$PUSHPLUS_TOKEN\",\"title\":\"cf-yx-dns DNS 更新失败\",\"content\":\"DNS 更新任务执行失败，请检查 Actions 日志\",\"template\":\"markdown\"}"
+                  CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+                  CF_DNS_NAME: ${{ secrets.CF_DNS_NAME }}
+              run: uv run src/dnscf.py --notify-failure "DNS 更新任务执行失败，请检查 Actions 日志"
 
             - name: Delete old workflow runs
               uses: Mattraks/delete-workflow-runs@0cf693bc9909e5e867ee8f27b813224ba862939c # v2
