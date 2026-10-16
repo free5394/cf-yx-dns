@@ -10,6 +10,7 @@ cf-yx-dns 是一个用于自动获取 Cloudflare 优选 IP 并更新 DNS 记录�
 
 - **自动获取优选 IP**：从第三方服务采集最新的 Cloudflare 优选 IP 列表
 - **智能 DNS 管理**：差量比对现有记录，先新增缺失记录再删除多余记录，更新过程不中断解析
+- **只管辖自己的记录**：仅处理同名下的 A/AAAA 记录，CNAME/TXT 等其他类型记录不读也不删；解析不到有效 IP 时拒绝执行任何删除
 - **消息推送**：通过 PushPlus 发送微信推送通知，实时掌握执行状态
 - **自动化执行**：支持 GitHub Actions 定时任务，实现无人值守运行
 
@@ -29,10 +30,23 @@ cf-yx-dns 是一个用于自动获取 Cloudflare 优选 IP 并更新 DNS 记录�
 /
 ├── .github/
 │   └── workflows/
+│       ├── ci.yml          # CI：代码检查 + 测试
 │       ├── dns_cf.yml      # DNS 更新工作流（每6小时执行）
 │       └── sync.yml        # Fork 同步工作流
+├── docs/
+│   ├── adr/                # 架构决策记录
+│   └── agents/             # 面向编码代理的说明
 ├── src/
-│   └── dnscf.py            # 主程序入口
+│   ├── cf_yx_dns/          # 实现包
+│   │   ├── cli.py          # 命令行入口（--dry-run / --check / --notify-failure）
+│   │   ├── config.py       # 环境变量读取
+│   │   ├── ips.py          # 优选 IP 抓取、提取与校验
+│   │   ├── cf_records.py   # DNS 记录差量同步
+│   │   └── notify.py       # PushPlus 推送
+│   └── dnscf.py            # 兼容入口（等价于 PYTHONPATH=src python -m cf_yx_dns）
+├── tests/                  # pytest 测试
+├── AGENTS.md               # 编码代理约定
+├── GLOSSARY.md             # 领域术语表
 ├── pyproject.toml          # 项目配置
 ├── uv.lock                 # 依赖锁定文件
 ├── .python-version         # Python 版本指定
@@ -130,6 +144,13 @@ uv run src/dnscf.py
 uv run src/dnscf.py --dry-run
 ```
 
+### 检查模式
+
+```bash
+# 存在差量时以 1 退出，无差量以 0 退出；同样不修改 DNS
+uv run src/dnscf.py --check
+```
+
 ### GitHub Actions 自动执行
 
 部署完成后，DNS 更新任务将自动按以下规则执行：
@@ -207,6 +228,9 @@ uv run src/dnscf.py --dry-run
 ```bash
 # 安装开发依赖
 uv sync --locked --dev
+
+# 代码检查
+uv run ruff check .
 
 # 运行测试
 uv run pytest
