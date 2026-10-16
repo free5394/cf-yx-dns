@@ -22,5 +22,8 @@ jobs:
       - name: 安装项目
         run: uv sync --locked --dev
 
+      - name: 代码检查
+        run: uv run ruff check .
+
       - name: 运行测试
         run: uv run pytest
