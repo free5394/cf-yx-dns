@@ -78,7 +78,7 @@ def main(argv=None):
         return 1
 
     name = config.cf_dns_name()
-    print(f"同步目标域名: {name}（Zone: {config.cf_zone_id()}）")
+    print(f"同步目标记录名: {name}（Zone: {config.cf_zone_id()}）")
 
     page_text = ips.fetch_ip_source()
     if not page_text:
@@ -104,7 +104,7 @@ def main(argv=None):
 
     if args.dry_run:
         print(f"[演练模式] 将新增 {len(plan.to_create)} 条: {plan.to_create}")
-        print(f"[演练模式] 将删除 {len(plan.to_delete)} 条: {[r['content'] for r in plan.to_delete]}")
+        print(f"[演练模式] 将删除 {len(plan.to_delete)} 条: {[record.content for record in plan.to_delete]}")
         return 0
 
     if args.check:
@@ -114,13 +114,13 @@ def main(argv=None):
         print(f"[检查模式] 检测到差量: 新增 {len(plan.to_create)} 条，待删除 {len(plan.to_delete)} 条")
         return 1
 
-    success_messages, error_messages = cf_records.apply_sync(name, plan)
-    push_content = success_messages + [f"失败: {message}" for message in error_messages]
-    if push_content:
-        print(push_content)
-        notify.push_plus("\n".join(push_content))
+    messages = cf_records.apply_sync(name, plan)
+    if messages:
+        print(messages)
+        notify.push_plus("\n".join(messages))
 
-    if error_messages:
-        print(f"错误: 存在 {len(error_messages)} 项 DNS 操作失败", file=sys.stderr)
+    errors = [message for message in messages if message.startswith("失败: ")]
+    if errors:
+        print(f"错误: 存在 {len(errors)} 项 DNS 操作失败", file=sys.stderr)
         return 1
     return 0

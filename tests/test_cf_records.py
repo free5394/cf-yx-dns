@@ -40,7 +40,7 @@ class FakeRecordsAPI:
     def list(self, **kwargs):
         self.list_calls.append(kwargs)
         self.events.append(("list", kwargs))
-        return [SimpleNamespace(**record) for record in self.pages.get(kwargs["type"], [])]
+        return list(self.pages.get(kwargs["type"], []))
 
     def create(self, **kwargs):
         self.create_calls.append(kwargs)
@@ -63,13 +63,13 @@ def install_fake_client(monkeypatch, records_api):
 
 
 def make_record(record_id, record_type, content, proxied=False):
-    return {
-        "id": record_id,
-        "name": NAME,
-        "type": record_type,
-        "content": content,
-        "proxied": proxied,
-    }
+    return cf_records.ManagedRecord(
+        id=record_id,
+        name=NAME,
+        type=record_type,
+        content=content,
+        proxied=proxied,
+    )
 
 
 class TestListDnsRecords:
@@ -80,7 +80,7 @@ class TestListDnsRecords:
         records = cf_records.list_dns_records(NAME)
 
         assert records == [
-            {"id": "rec-1", "name": NAME, "type": "A", "content": "104.16.1.1", "proxied": False}
+            cf_records.ManagedRecord(id="rec-1", name=NAME, type="A", content="104.16.1.1", proxied=False)
         ]
         assert [call["type"] for call in api.list_calls] == ["A", "AAAA"]
         assert all(call["name"] == {"exact": NAME} for call in api.list_calls)
@@ -231,25 +231,25 @@ class TestApplySync:
             proxied_by_type={"A": True},
         )
 
-        success, errors = cf_records.apply_sync(NAME, plan)
+        messages = cf_records.apply_sync(NAME, plan)
 
-        assert errors == []
         assert [event for event, _ in api.events] == ["create", "delete"]
         assert api.create_calls[0]["content"] == "104.16.2.2"
         assert api.create_calls[0]["proxied"] is True
         assert api.delete_calls[0] == {"dns_record_id": "rec-1", "zone_id": "zone-id"}
-        assert len(success) == 2
+        assert len(messages) == 2
+        assert not any(message.startswith("失败: ") for message in messages)
 
     def test_single_create_failure_does_not_stop_others(self, monkeypatch):
         api = FakeRecordsAPI(create_error=RuntimeError("api down"))
         install_fake_client(monkeypatch, api)
         plan = cf_records.SyncPlan(to_create=["104.16.1.1", "104.16.2.2"], proxied_by_type={"A": False})
 
-        success, errors = cf_records.apply_sync(NAME, plan)
+        messages = cf_records.apply_sync(NAME, plan)
 
-        assert success == []
-        assert len(errors) == 2
-        assert all("新增" in message for message in errors)
+        assert len(messages) == 2
+        assert all(message.startswith("失败: ") for message in messages)
+        assert all("新增" in message for message in messages)
         assert len(api.create_calls) == 2
 
     def test_delete_failure_is_collected_not_swallowed(self, monkeypatch):
@@ -257,11 +257,11 @@ class TestApplySync:
         install_fake_client(monkeypatch, api)
         plan = cf_records.SyncPlan(to_delete=[make_record("rec-1", "A", "104.16.1.1")])
 
-        success, errors = cf_records.apply_sync(NAME, plan)
+        messages = cf_records.apply_sync(NAME, plan)
 
-        assert success == []
-        assert len(errors) == 1
-        assert "删除旧记录失败" in errors[0]
+        assert len(messages) == 1
+        assert messages[0].startswith("失败: ")
+        assert "删除旧记录失败" in messages[0]
 
 
 class TestRecordCrud:

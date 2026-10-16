@@ -29,6 +29,25 @@ class DnsSyncError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class ManagedRecord:
+    """一条受管辖的现有 DNS 记录。
+
+    Args:
+        id: Cloudflare 记录 ID
+        name: 记录名
+        type: 记录类型（A/AAAA）
+        content: 记录内容（IP 字符串）
+        proxied: 是否走 Cloudflare 代理
+    """
+
+    id: str
+    name: str
+    type: str
+    content: str
+    proxied: bool
+
+
+@dataclass(frozen=True)
 class SyncPlan:
     """一次差量同步的计划（只读计算结果，不含任何写操作）。
 
@@ -68,7 +87,7 @@ def list_dns_records(name):
         name: DNS 记录名
 
     Returns:
-        list[dict]: 每条含 id/name/type/content/proxied
+        list[ManagedRecord]: 每条含 id/name/type/content/proxied
     """
     client = get_client()
     zone_id = config.cf_zone_id()
@@ -80,13 +99,13 @@ def list_dns_records(name):
             type=record_type,
         ):
             records.append(
-                {
-                    "id": record.id,
-                    "name": record.name,
-                    "type": record.type,
-                    "content": record.content,
-                    "proxied": record.proxied,
-                }
+                ManagedRecord(
+                    id=record.id,
+                    name=record.name,
+                    type=record.type,
+                    content=record.content,
+                    proxied=bool(record.proxied),
+                )
             )
             print(f"现有记录: {record.type} {record.name} -> {record.content} (proxied: {record.proxied})")
     print(f"获取记录数: {len(records)}")
@@ -150,7 +169,7 @@ def _comparison_key(record):
     以规范化 IP 身份为准，这样展开写法与压缩写法被视为同一条记录；内容不是公网 IP
     （异常数据、历史遗留）时退化为原始字符串，仍会被判为「需要删除」。
     """
-    return ips.canonicalize(record["content"]) or record["content"]
+    return ips.canonicalize(record.content) or record.content
 
 
 def compute_diff(existing_records, target_ips):
@@ -161,7 +180,7 @@ def compute_diff(existing_records, target_ips):
         target_ips: 目标 IP 列表（规范化字符串）
 
     Returns:
-        tuple[list[str], list[dict]]: (待新增 IP 列表, 待删除记录列表)
+        tuple[list[str], list[ManagedRecord]]: (待新增 IP 列表, 待删除记录列表)
     """
     target = list(dict.fromkeys(target_ips))
     target_keys = set(target)
@@ -177,7 +196,7 @@ def _resolve_proxied(existing_records, record_type):
     现有同类记录的取值一致时沿用；没有同类记录时用 False（Cloudflare 默认值）；取值
     不一致时不猜测，退回 False 并告警。
     """
-    values = {bool(record["proxied"]) for record in existing_records if record["type"] == record_type}
+    values = {record.proxied for record in existing_records if record.type == record_type}
     if len(values) == 1:
         return values.pop()
     if len(values) > 1:
@@ -224,29 +243,31 @@ def apply_sync(name, plan):
     ``docs/adr/0002-create-before-delete-sync-order.md``）；单条失败不中断其余条目，
     也不做事务回滚。
 
+    消息在此一次性产出最终文案（失败消息自带「失败: 」前缀），推送内容只有一个来源，
+    CLI 不再二次加工。
+
     Args:
         name: DNS 记录名
         plan: ``plan_sync`` 算出的计划
 
     Returns:
-        tuple[list[str], list[str]]: (成功消息列表, 失败消息列表)
+        list[str]: 最终消息列表（成功与失败按发生顺序混排，失败自带前缀）
     """
-    success_messages = []
-    error_messages = []
+    messages = []
 
     for ip in plan.to_create:
         record_type = ips.record_type(ips.parse_ip(ip))
         proxied = plan.proxied_by_type.get(record_type, False)
         try:
-            success_messages.append(create_dns_record(name, ip, proxied=proxied))
+            messages.append(create_dns_record(name, ip, proxied=proxied))
         except Exception as e:
-            error_messages.append(f"ip:{ip} 新增 {name} 失败 - {e}")
+            messages.append(f"失败: ip:{ip} 新增 {name} 失败 - {e}")
 
     for record in plan.to_delete:
         try:
-            delete_dns_record(record["id"])
-            success_messages.append(f"ip:{record['content']} 删除旧记录成功")
+            delete_dns_record(record.id)
+            messages.append(f"ip:{record.content} 删除旧记录成功")
         except Exception as e:
-            error_messages.append(f"ip:{record['content']} 删除旧记录失败 - {e}")
+            messages.append(f"失败: ip:{record.content} 删除旧记录失败 - {e}")
 
-    return success_messages, error_messages
+    return messages

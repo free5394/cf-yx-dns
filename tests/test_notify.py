@@ -91,7 +91,7 @@ class TestPushPlus:
         assert notify.push_plus("正文") is None
         assert "跳过消息推送" in capsys.readouterr().out
 
-    def test_explicit_token_and_title_override(self, monkeypatch):
+    def test_title_override_reads_token_from_config(self, monkeypatch):
         seen = {}
 
         def fake_post(url, json, timeout):
@@ -100,9 +100,10 @@ class TestPushPlus:
 
         monkeypatch.setattr(notify.httpx, "post", fake_post)
         monkeypatch.delenv("PUSHPLUS_TOKEN")
+        monkeypatch.setattr(config, "pushplus_token", lambda: "from-config")
 
-        assert notify.push_plus("正文", title="自定义标题", token="explicit") is True
-        assert seen["token"] == "explicit"
+        assert notify.push_plus("正文", title="自定义标题") is True
+        assert seen["token"] == "from-config"
         assert seen["title"] == "自定义标题"
 
 

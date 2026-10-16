@@ -162,6 +162,7 @@ def parse_ip_addresses(page_text):
     """解析来源文本，返回可用的优选 IP 列表。
 
     非公网候选（私有/保留/回环等）与语法非法候选一并过滤，并打印跳过数量。
+    错误归 CLI 报告（stderr）：无可用 IP 时不打印错误，静默返回 None，由 CLI 统一报错。
 
     Args:
         page_text: HTML 页面或纯文本
@@ -170,7 +171,6 @@ def parse_ip_addresses(page_text):
         list[str] | None: 规范化 IP 列表（去重保序）；无可用 IP 返回 None
     """
     if not page_text:
-        print("错误: 缺少必要的参数 (page_text)")
         return None
 
     candidates = extract_candidates(page_text)
@@ -185,7 +185,6 @@ def parse_ip_addresses(page_text):
             usable.append(canonical)
 
     if not usable:
-        print("错误: 未解析到有效 IP 地址")
         return None
 
     if skipped:

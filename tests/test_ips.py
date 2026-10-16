@@ -132,14 +132,13 @@ class TestParseIpAddresses:
         assert ips.parse_ip_addresses(text) == ["104.16.1.1"]
         assert "已跳过 2 个无效或非公网候选" in capsys.readouterr().out
 
-    def test_none_when_no_candidate(self, capsys):
+    def test_none_when_no_candidate_does_not_print_error(self, capsys):
+        # 错误归 CLI 报告（stderr）：库层静默返回 None，不打印「错误:」
         assert ips.parse_ip_addresses("<html>no ip here</html>") is None
-        assert "错误: 未解析到有效 IP 地址" in capsys.readouterr().out
+        assert "错误" not in capsys.readouterr().out
 
-    def test_none_when_all_candidates_filtered(self, capsys):
+    def test_none_when_all_candidates_filtered(self):
         assert ips.parse_ip_addresses("<p>192.168.1.1</p>") is None
-        assert "错误: 未解析到有效 IP 地址" in capsys.readouterr().out
 
-    def test_none_for_empty_input(self, capsys):
+    def test_none_for_empty_input(self):
         assert ips.parse_ip_addresses("") is None
-        assert "错误: 缺少必要的参数 (page_text)" in capsys.readouterr().out

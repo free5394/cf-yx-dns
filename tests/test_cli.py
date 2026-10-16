@@ -34,6 +34,10 @@ def make_plan(to_create=(), to_delete=()):
     return cf_records.SyncPlan(to_create=list(to_create), to_delete=list(to_delete), proxied_by_type={})
 
 
+def _managed_record(content):
+    return cf_records.ManagedRecord(id="rec-x", name=NAME, type="A", content=content, proxied=False)
+
+
 class TestPreconditions:
     def test_dry_run_and_check_are_mutually_exclusive(self, monkeypatch):
         monkeypatch.setattr(cli.notify, "push_plus", _forbid_push)
@@ -88,7 +92,7 @@ def _raise_sync_error(name, target_ips):
 class TestDryRun:
     def test_prints_plan_without_writing_or_pushing(self, monkeypatch, env, capsys):
         stub_source(monkeypatch)
-        stub_plan(monkeypatch, make_plan(["104.16.2.2"], [{"content": "104.16.9.9"}]))
+        stub_plan(monkeypatch, make_plan(["104.16.2.2"], [_managed_record("104.16.9.9")]))
         monkeypatch.setattr(cli.cf_records, "apply_sync", _forbid_call)
         monkeypatch.setattr(cli.notify, "push_plus", _forbid_push)
 
@@ -140,7 +144,7 @@ class TestRealRun:
         monkeypatch.setattr(
             cli.cf_records,
             "apply_sync",
-            lambda name, plan: ([f"ip:104.16.2.2 解析 {name} 成功"], []),
+            lambda name, plan: [f"ip:104.16.2.2 解析 {name} 成功"],
         )
         pushed = {}
         monkeypatch.setattr(cli.notify, "push_plus", lambda content, **kwargs: pushed.update(content=content))
@@ -155,21 +159,21 @@ class TestRealRun:
         monkeypatch.setattr(
             cli.cf_records,
             "apply_sync",
-            lambda name, plan: ([], ["ip:104.16.2.2 新增 dns.example.com 失败 - api down"]),
+            lambda name, plan: ["失败: ip:104.16.2.2 新增 dns.example.com 失败 - api down"],
         )
         pushed = {}
         monkeypatch.setattr(cli.notify, "push_plus", lambda content, **kwargs: pushed.update(content=content))
 
         assert cli.main([]) == 1
 
-        assert "失败" in pushed["content"]
-        assert "新增 dns.example.com 失败" in pushed["content"]
+        # 失败前缀由 apply_sync 内聚产出，CLI 只拼接推送、不再二次加工
+        assert pushed["content"] == "失败: ip:104.16.2.2 新增 dns.example.com 失败 - api down"
         assert "存在 1 项 DNS 操作失败" in capsys.readouterr().err
 
     def test_no_changes_skips_push(self, monkeypatch, env):
         stub_source(monkeypatch)
         stub_plan(monkeypatch, make_plan())
-        monkeypatch.setattr(cli.cf_records, "apply_sync", lambda name, plan: ([], []))
+        monkeypatch.setattr(cli.cf_records, "apply_sync", lambda name, plan: [])
         monkeypatch.setattr(cli.notify, "push_plus", _forbid_push)
 
         assert cli.main([]) == 0

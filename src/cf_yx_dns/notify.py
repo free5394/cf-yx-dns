@@ -20,18 +20,17 @@ def _json_body(response):
         return None
 
 
-def push_plus(content, *, title=SUCCESS_TITLE, token=None):
+def push_plus(content, *, title=SUCCESS_TITLE):
     """发送 PushPlus 消息。
 
     Args:
         content: 消息正文（markdown）
         title: 消息标题
-        token: 覆盖配置里的 Token（默认读 PUSHPLUS_TOKEN）
 
     Returns:
         bool | None: True 发送成功；False 发送失败；None 未配置 Token（跳过）
     """
-    token = token if token is not None else config.pushplus_token()
+    token = config.pushplus_token()
     if not token:
         print("PUSHPLUS_TOKEN 未设置，跳过消息推送")
         return None
