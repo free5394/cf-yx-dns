@@ -3,6 +3,7 @@
 退出码约定：
 - 0：成功；--dry-run 差量算出后恒为 0；--check 无差量时为 0；没有待推送内容时不推送
 - 1：前置条件缺失、来源抓取/解析失败、存在 DNS 操作失败、--check 检测到差量
+- 2：--dry-run 与 --check 并传（argparse 用法错误）
 """
 
 import argparse
@@ -16,12 +17,13 @@ from . import cf_records, config, ips, notify
 def build_parser():
     """构造命令行参数解析器。"""
     parser = argparse.ArgumentParser(description="Cloudflare DNS 优选 IP 自动更新工具")
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--dry-run",
         action="store_true",
         help="演练模式：只打印将要新增/删除的记录，不修改 DNS（差量算出后恒以 0 退出）",
     )
-    parser.add_argument(
+    mode.add_argument(
         "--check",
         action="store_true",
         help="检查模式：存在差量时以 1 退出，无差量以 0 退出，不修改 DNS",

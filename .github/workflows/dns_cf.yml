@@ -45,7 +45,9 @@ jobs:
                   PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
                   CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
                   CF_DNS_NAME: ${{ secrets.CF_DNS_NAME }}
-              run: uv run src/dnscf.py --notify-failure "DNS 更新任务执行失败，请检查 Actions 日志"
+              # --no-sync：跳过 uv run 自带的环境同步——uv sync 本身失败（如锁文件不匹配）时，
+              # 失败分支若再走一遍同步只会同样失败，告警永远发不出去（告警自举）
+              run: uv run --no-sync src/dnscf.py --notify-failure "DNS 更新任务执行失败，请检查 Actions 日志"
 
             - name: Delete old workflow runs
               uses: Mattraks/delete-workflow-runs@0cf693bc9909e5e867ee8f27b813224ba862939c # v2

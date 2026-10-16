@@ -35,6 +35,14 @@ def make_plan(to_create=(), to_delete=()):
 
 
 class TestPreconditions:
+    def test_dry_run_and_check_are_mutually_exclusive(self, monkeypatch):
+        monkeypatch.setattr(cli.notify, "push_plus", _forbid_push)
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main(["--dry-run", "--check"])
+
+        assert exc_info.value.code == 2
+
     def test_missing_env_returns_1(self, monkeypatch, capsys):
         for name in ("CF_API_TOKEN", "CF_ZONE_ID", "CF_DNS_NAME"):
             monkeypatch.delenv(name, raising=False)
