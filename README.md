@@ -4,7 +4,7 @@ Cloudflare DNS 优选 IP 自动更新工具
 
 ## 项目概述
 
-cf-yx-dns 是一个用于自动获取 Cloudflare 优选 IP 并更新 DNS 记录的 Python 工具。通过定时任务自动执行，帮助用户快速将优质 IP 地址同步到 Cloudflare DNS，实现网络访问优化。
+cf-yx-dns 是一个用于自动获取 Cloudflare 优选 IP 并更新 DNS 记录的 Python 工具。通过定时任务自动执行，帮助用户快速将优选 IP 地址同步到 Cloudflare DNS，实现网络访问优化。
 
 ## 核心功能
 
