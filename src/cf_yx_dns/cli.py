@@ -1,7 +1,7 @@
 """命令行入口。
 
 退出码约定：
-- 0：成功；--dry-run 恒为 0；--check 无差量时为 0；没有待推送内容时不推送
+- 0：成功；--dry-run 差量算出后恒为 0；--check 无差量时为 0；没有待推送内容时不推送
 - 1：前置条件缺失、来源抓取/解析失败、存在 DNS 操作失败、--check 检测到差量
 """
 
@@ -19,7 +19,7 @@ def build_parser():
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="演练模式：只打印将要新增/删除的记录，不修改 DNS（恒以 0 退出）",
+        help="演练模式：只打印将要新增/删除的记录，不修改 DNS（差量算出后恒以 0 退出）",
     )
     parser.add_argument(
         "--check",
