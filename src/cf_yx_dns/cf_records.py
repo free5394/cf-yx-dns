@@ -1,27 +1,23 @@
-"""Cloudflare DNS 记录的读取、差量计算与同步。
+"""Cloudflare DNS 记录的差量计算与同步。
 
 本工具只管辖 A/AAAA 两类记录（见 ``docs/adr/0001-dns-record-management-scope.md``）：
 查询按类型收敛，同名的其他类型记录（CNAME/TXT/MX…）既不会被读取，也不会被删除。
 
-失败语义：CRUD 函数失败即抛异常（Cloudflare SDK 本身即抛），由同步层统一收集成
-成功/失败消息 —— 不存在「返回错误字符串却被当成成功」的中间态。
+两个同步动词（``plan_sync`` / ``apply_sync``）把**记录存储**作为显式依赖接收，自己不再
+创建 Cloudflare 客户端：它们只认识「列出记录名下的管辖记录、新建一条记录、删除一条记录」
+这三个业务操作与 ``ManagedRecord`` 值类型，不认识 SDK、Zone、Token 与 TTL。谁接触网络由
+传入的实现决定 —— Cloudflare 实现在 ``cf_record_store``，测试注入替身即可。
+
+失败语义：记录存储的写操作失败即抛异常，由 ``apply_sync`` 统一收集成成功/失败消息 ——
+不存在「返回错误字符串却被当成成功」的中间态。
 """
 
-import time
 from dataclasses import dataclass, field
 
-from cloudflare import Cloudflare
-
-from . import config, ips
+from . import ips
 
 # 本工具管辖的记录类型
 MANAGED_TYPES = (ips.RECORD_TYPE_IPV4, ips.RECORD_TYPE_IPV6)
-# 新建记录的 TTL（秒）
-DEFAULT_TTL = 300
-
-# Cloudflare 客户端（按 API Token 缓存，避免每次操作重复创建）
-_client = None
-_client_token = None
 
 
 class DnsSyncError(RuntimeError):
@@ -67,100 +63,25 @@ class SyncPlan:
         return not self.to_create and not self.to_delete
 
 
-def get_client():
-    """获取按 API Token 缓存的 Cloudflare 客户端。"""
-    global _client, _client_token
-    token = config.cf_api_token()
-    if _client is None or _client_token != token:
-        _client = Cloudflare(api_token=token)
-        _client_token = token
-    return _client
+def _canonical_create_target(name, ip):
+    """把一条待新增的 IP 校验并规范化成记录存储要写入的字段。
 
-
-def list_dns_records(name):
-    """列出该记录名下受管辖类型（A/AAAA）的记录。
-
-    按类型分别查询并通过页对象迭代自动翻页：翻页由 SDK 负责，判据是「还有没有下一页」，
-    不依赖未在 SDK 模型中声明的 ``result_info.total_count``。
-
-    Args:
-        name: DNS 记录名
-
-    Returns:
-        list[ManagedRecord]: 每条含 id/name/type/content/proxied
-    """
-    client = get_client()
-    zone_id = config.cf_zone_id()
-    records = []
-    for record_type in MANAGED_TYPES:
-        for record in client.dns.records.list(
-            zone_id=zone_id,
-            name={"exact": name},
-            type=record_type,
-        ):
-            records.append(
-                ManagedRecord(
-                    id=record.id,
-                    name=record.name,
-                    type=record.type,
-                    content=record.content,
-                    proxied=bool(record.proxied),
-                )
-            )
-            print(f"现有记录: {record.type} {record.name} -> {record.content} (proxied: {record.proxied})")
-    print(f"获取记录数: {len(records)}")
-    return records
-
-
-def create_dns_record(name, ip, *, proxied=False):
-    """新建 DNS 记录。
+    校验与规范化属于同步层：记录存储的实现只管写入，不必各自重复一次业务判断。
 
     Args:
         name: DNS 记录名
         ip: IP 地址（写入前规范化）
-        proxied: 是否走 Cloudflare 代理；显式传入，不依赖 API 的隐式默认
 
     Returns:
-        str: 成功消息
+        tuple[str, str]: (记录类型, 规范化 IP)
 
     Raises:
         DnsSyncError: 记录名或 IP 非法
-        cloudflare.APIError: Cloudflare 接口报错
     """
     addr = ips.parse_ip(ip)
     if not name or addr is None:
-        raise DnsSyncError(f"新增 {name} 失败 - 记录名或 IP 非法: {ip!r}")
-
-    canonical = str(addr)
-    record_type = ips.record_type(addr)
-    current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-
-    get_client().dns.records.create(
-        zone_id=config.cf_zone_id(),
-        name=name,
-        content=canonical,
-        ttl=DEFAULT_TTL,
-        type=record_type,
-        proxied=proxied,
-        comment=current_time,
-    )
-    print(f"dns add success: ---- Time: {current_time} ---- ip:{canonical} (type: {record_type}, proxied: {proxied})")
-    return f"ip:{canonical} 解析 {name} 成功"
-
-
-def delete_dns_record(record_id):
-    """删除 DNS 记录。
-
-    Args:
-        record_id: DNS 记录 ID
-
-    Raises:
-        DnsSyncError: record_id 为空
-        cloudflare.APIError: Cloudflare 接口报错
-    """
-    if not record_id:
-        raise DnsSyncError("删除失败 - 缺少 record_id")
-    get_client().dns.records.delete(dns_record_id=record_id, zone_id=config.cf_zone_id())
+        raise DnsSyncError(f"记录名或 IP 非法: {ip!r}")
+    return ips.record_type(addr), str(addr)
 
 
 def _comparison_key(record):
@@ -204,12 +125,13 @@ def _resolve_proxied(existing_records, record_type):
     return False
 
 
-def plan_sync(name, target_ips):
+def plan_sync(name, target_ips, store):
     """算出本次同步计划，不做任何写操作。
 
     Args:
         name: DNS 记录名
         target_ips: 目标 IP 列表（规范化字符串）
+        store: 记录存储（只用到「列出记录名下的管辖记录」这一操作）
 
     Returns:
         SyncPlan: 差量计划
@@ -221,7 +143,7 @@ def plan_sync(name, target_ips):
     if not target_ips:
         raise DnsSyncError("目标 IP 列表为空，拒绝同步（不执行任何新增或删除）")
 
-    existing_records = list_dns_records(name)
+    existing_records = store.list_records(name)
     to_create, to_delete = compute_diff(existing_records, target_ips)
 
     proxied_by_type = {}
@@ -236,7 +158,7 @@ def plan_sync(name, target_ips):
     return SyncPlan(to_create=to_create, to_delete=to_delete, proxied_by_type=proxied_by_type)
 
 
-def apply_sync(name, plan):
+def apply_sync(name, plan, store):
     """按计划执行同步：先新增缺失记录，再删除多余旧记录。
 
     先增后删保证同步过程中该域名始终保有可用的解析记录（见
@@ -249,6 +171,7 @@ def apply_sync(name, plan):
     Args:
         name: DNS 记录名
         plan: ``plan_sync`` 算出的计划
+        store: 记录存储（用到「新建一条记录」与「删除一条记录」两个操作）
 
     Returns:
         list[str]: 最终消息列表（成功与失败按发生顺序混排，失败自带前缀）
@@ -256,16 +179,17 @@ def apply_sync(name, plan):
     messages = []
 
     for ip in plan.to_create:
-        record_type = ips.record_type(ips.parse_ip(ip))
-        proxied = plan.proxied_by_type.get(record_type, False)
         try:
-            messages.append(create_dns_record(name, ip, proxied=proxied))
+            record_type, content = _canonical_create_target(name, ip)
+            store.create_record(name, record_type, content, proxied=plan.proxied_by_type.get(record_type, False))
         except Exception as e:
             messages.append(f"失败: ip:{ip} 新增 {name} 失败 - {e}")
+            continue
+        messages.append(f"ip:{content} 解析 {name} 成功")
 
     for record in plan.to_delete:
         try:
-            delete_dns_record(record.id)
+            store.delete_record(record.id)
             messages.append(f"ip:{record.content} 删除旧记录成功")
         except Exception as e:
             messages.append(f"失败: ip:{record.content} 删除旧记录失败 - {e}")

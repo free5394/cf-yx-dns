@@ -11,7 +11,7 @@ import sys
 
 from dotenv import load_dotenv
 
-from . import cf_records, config, ips, notify
+from . import cf_record_store, cf_records, config, ips, notify
 
 
 def build_parser():
@@ -80,6 +80,13 @@ def main(argv=None):
     name = config.cf_dns_name()
     print(f"同步目标记录名: {name}（Zone: {config.cf_zone_id()}）")
 
+    # 组合根：记录存储只在这里创建一次，两个同步动词都接收它作为显式依赖。
+    # 构造期读取 Zone 与 Token，之后各操作不再各自去读环境变量。
+    store = cf_record_store.CloudflareRecordStore(
+        api_token=config.cf_api_token(),
+        zone_id=config.cf_zone_id(),
+    )
+
     page_text = ips.fetch_ip_source()
     if not page_text:
         print("错误: 无法获取优选 IP", file=sys.stderr)
@@ -94,7 +101,7 @@ def main(argv=None):
         print(f"{index}: {ip}")
 
     try:
-        plan = cf_records.plan_sync(name, target_ips)
+        plan = cf_records.plan_sync(name, target_ips, store)
     except cf_records.DnsSyncError as e:
         print(f"错误: {e}", file=sys.stderr)
         return 1
@@ -114,7 +121,7 @@ def main(argv=None):
         print(f"[检查模式] 检测到差量: 新增 {len(plan.to_create)} 条，待删除 {len(plan.to_delete)} 条")
         return 1
 
-    messages = cf_records.apply_sync(name, plan)
+    messages = cf_records.apply_sync(name, plan, store)
     if messages:
         print(messages)
         notify.push_plus("\n".join(messages))

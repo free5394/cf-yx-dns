@@ -1,4 +1,6 @@
-"""命令行入口的测试：退出码、演练/检查模式、失败上报。"""
+"""命令行入口的测试：退出码、演练/检查模式、失败上报与组合根。"""
+
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,6 +13,19 @@ NAME = "dns.example.com"
 def no_dotenv(monkeypatch):
     """仓库根目录存在 .env，测试统一屏蔽，避免真实配置泄漏进断言。"""
     monkeypatch.setattr(cli, "load_dotenv", lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def store_factory(monkeypatch):
+    """记录存储由 CLI 组合根创建：替身工厂记录每次构造的参数，供断言核对配置与复用。"""
+    created = []
+
+    def fake_factory(**kwargs):
+        created.append(SimpleNamespace(**kwargs))
+        return created[-1]
+
+    monkeypatch.setattr(cli.cf_record_store, "CloudflareRecordStore", fake_factory)
+    return created
 
 
 @pytest.fixture
@@ -27,7 +42,7 @@ def stub_source(monkeypatch, target_ips=("104.16.1.1",)):
 
 
 def stub_plan(monkeypatch, plan):
-    monkeypatch.setattr(cli.cf_records, "plan_sync", lambda name, target_ips: plan)
+    monkeypatch.setattr(cli.cf_records, "plan_sync", lambda name, target_ips, store: plan)
 
 
 def make_plan(to_create=(), to_delete=()):
@@ -81,12 +96,38 @@ class TestPreconditions:
         assert "拒绝同步" in capsys.readouterr().err
 
 
-def _raise_api_error(name, target_ips):
+def _raise_api_error(name, target_ips, store):
     raise RuntimeError("api down")
 
 
-def _raise_sync_error(name, target_ips):
+def _raise_sync_error(name, target_ips, store):
     raise cf_records.DnsSyncError("目标 IP 列表为空，拒绝同步")
+
+
+class TestCompositionRoot:
+    def test_creates_one_store_from_config_and_passes_it_to_both_verbs(self, monkeypatch, env, store_factory):
+        """组合根只造一个存储（配置在构造时读取），两个同步动词接收同一个实例。"""
+        stub_source(monkeypatch)
+        seen = {}
+
+        def fake_plan(name, target_ips, store):
+            seen["plan"] = store
+            return make_plan(["104.16.2.2"])
+
+        def fake_apply(name, plan, store):
+            seen["apply"] = store
+            return [f"ip:104.16.2.2 解析 {name} 成功"]
+
+        monkeypatch.setattr(cli.cf_records, "plan_sync", fake_plan)
+        monkeypatch.setattr(cli.cf_records, "apply_sync", fake_apply)
+        monkeypatch.setattr(cli.notify, "push_plus", lambda content, **kwargs: True)
+
+        assert cli.main([]) == 0
+
+        assert len(store_factory) == 1  # 一次运行只构造一个存储
+        assert store_factory[0].api_token == "token"
+        assert store_factory[0].zone_id == "zone-id"
+        assert seen["plan"] is store_factory[0] is seen["apply"]  # 两个动词共用同一个存储
 
 
 class TestDryRun:
@@ -144,7 +185,7 @@ class TestRealRun:
         monkeypatch.setattr(
             cli.cf_records,
             "apply_sync",
-            lambda name, plan: [f"ip:104.16.2.2 解析 {name} 成功"],
+            lambda name, plan, store: [f"ip:104.16.2.2 解析 {name} 成功"],
         )
         pushed = {}
         monkeypatch.setattr(cli.notify, "push_plus", lambda content, **kwargs: pushed.update(content=content))
@@ -159,7 +200,7 @@ class TestRealRun:
         monkeypatch.setattr(
             cli.cf_records,
             "apply_sync",
-            lambda name, plan: ["失败: ip:104.16.2.2 新增 dns.example.com 失败 - api down"],
+            lambda name, plan, store: ["失败: ip:104.16.2.2 新增 dns.example.com 失败 - api down"],
         )
         pushed = {}
         monkeypatch.setattr(cli.notify, "push_plus", lambda content, **kwargs: pushed.update(content=content))
@@ -173,7 +214,7 @@ class TestRealRun:
     def test_no_changes_skips_push(self, monkeypatch, env):
         stub_source(monkeypatch)
         stub_plan(monkeypatch, make_plan())
-        monkeypatch.setattr(cli.cf_records, "apply_sync", lambda name, plan: [])
+        monkeypatch.setattr(cli.cf_records, "apply_sync", lambda name, plan, store: [])
         monkeypatch.setattr(cli.notify, "push_plus", _forbid_push)
 
         assert cli.main([]) == 0

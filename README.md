@@ -44,6 +44,7 @@ cf-yx-dns 是一个用于自动获取 Cloudflare 优选 IP 并更新 DNS 记录�
 │   │   ├── config.py       # 环境变量读取
 │   │   ├── ips.py          # 优选 IP 抓取、提取与校验
 │   │   ├── cf_records.py   # DNS 记录差量同步
+│   │   ├── cf_record_store.py  # 记录存储的 Cloudflare 实现（唯一接触 SDK 的一层）
 │   │   └── notify.py       # PushPlus 推送
 │   └── dnscf.py            # 兼容入口（等价于 PYTHONPATH=src python -m cf_yx_dns）
 ├── tests/                  # pytest 测试
