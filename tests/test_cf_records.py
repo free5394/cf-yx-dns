@@ -95,6 +95,20 @@ class TestComputeDiff:
         assert to_create == ["104.16.1.1"]
         assert to_delete == []
 
+    def test_ipv6_equivalent_written_forms_are_the_same_record(self):
+        """展开写法与压缩写法是同一个地址：既不当作新增，也不删除。"""
+        expanded = make_record(record_type="AAAA", content="2606:4700:0000:0000:0000:0000:0000:0001")
+        to_create, to_delete = cf_records.compute_diff([expanded], ["2606:4700::1"])
+        assert to_create == []
+        assert to_delete == []
+
+    def test_content_that_is_not_a_public_ip_is_deleted_as_is(self):
+        """内容不是公网 IP（历史遗留）时按原始字符串比较，不去猜里面的地址。"""
+        legacy = make_record(content="104.16.1.1 # 遗留注释")
+        to_create, to_delete = cf_records.compute_diff([legacy], ["104.16.1.1"])
+        assert to_create == ["104.16.1.1"]  # 整条内容不匹配，这个 IP 仍算缺
+        assert to_delete == [legacy]
+
 
 # --- plan_sync ------------------------------------------------------------
 
@@ -241,7 +255,8 @@ class TestCloudflareRecordStore:
     def test_real_seam_pages_both_types_and_shapes_create(self, monkeypatch):
         """跨真实 seam 的唯一一条测试：真实 SDK + 模拟 HTTP 传输。
 
-        覆盖两件只有真实实现才会出错的事：分页遍历（A 25 条跨 3 页、AAAA 3 条跨 2 页），
+        覆盖三件只有真实实现才会出错的事：分页遍历（A 25 条跨 3 页、AAAA 3 条跨 2 页）、
+        管辖范围的请求参数（name 走精确匹配，退化成模糊匹配就会把整个 zone 算进管辖范围），
         以及新建记录的参数形状（zone_id 进路径，name/type/content/ttl/proxied/comment 进请求体）。
         """
         requests = []
@@ -274,6 +289,8 @@ class TestCloudflareRecordStore:
             ("AAAA", "1"),
             ("AAAA", "2"),
         ]
+        # 管辖范围同样靠请求参数钉住：name 少传或退化成模糊匹配，管辖范围就会变成整个 zone
+        assert [dict(r.url.params)["name.exact"] for r in requests] == [NAME] * 5
         assert len(records) == 28
         assert [record.type for record in records].count("A") == 25
         assert [record.type for record in records].count("AAAA") == 3
