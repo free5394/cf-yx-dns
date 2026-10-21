@@ -6,6 +6,7 @@
 
 - 装开发依赖、跑检查、跑测试：见 `README.md` 的「开发环境」（`uv sync --locked --dev`、`uv run ruff check .`、`uv run pytest`），提交前钩子见同节。
 - 模块职责与分层（哪一层碰 SDK）：见 `src/cf_yx_dns/__init__.py` 的「模块划分」。
+- 编码与评审标准（判断项，机械检查之外）：见 `CODING_STANDARDS.md`。
 
 ## Agent skills
 
