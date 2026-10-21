@@ -239,6 +239,12 @@ uv run ruff check .
 uv run pytest
 ```
 
+启用提交前检查：上面两条会在每次提交前自动跑，失败即拦下这次提交。
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ## 许可证
 
 本项目基于 [Apache License 2.0](LICENSE) 开源许可。

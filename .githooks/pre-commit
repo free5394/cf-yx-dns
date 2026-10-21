@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# 提交前跑本仓库自己的两条检查，命令与 README「开发环境」和 CI 保持一致。
+#
+# 启用（每个克隆做一次）：
+#   git config core.hooksPath .githooks
+# 临时跳过（仅在明确知道自己在做什么时）：
+#   git commit --no-verify
+set -euo pipefail
+
+uv run ruff check .
+uv run pytest
