@@ -1,0 +1,3 @@
+# Windows 上 core.autocrlf=true 会把检出的行尾换成 CRLF；
+# 钩子是 bash 脚本，CRLF 会让它报 bad interpreter 而跑不起来。
+.githooks/* text eol=lf

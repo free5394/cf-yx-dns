@@ -104,8 +104,8 @@ class CloudflareRecordStore:
             comment=current_time,
         )
         print(
-            f"dns add success: ---- Time: {current_time} ---- "
-            f"ip:{content} (type: {record_type}, proxied: {proxied})"
+            f"新增记录成功: ---- 时间: {current_time} ---- "
+            f"ip:{content}（类型: {record_type}，代理: {proxied}）"
         )
 
     def delete_record(self, record_id):

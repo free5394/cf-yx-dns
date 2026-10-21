@@ -98,7 +98,7 @@ def main(argv=None):
         return 1
 
     for index, ip in enumerate(target_ips):
-        print(f"{index}: {ip}")
+        print(f"优选 IP {index}: {ip}")
 
     try:
         plan = cf_records.plan_sync(name, target_ips, store)

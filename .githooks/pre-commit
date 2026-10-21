@@ -1,11 +1,25 @@
 #!/usr/bin/env bash
-# 提交前跑本仓库自己的两条检查，命令与 README「开发环境」和 CI 保持一致。
+# 提交前跑本仓库自己的检查，与 README「开发环境」和 CI 等价。
 #
 # 启用（每个克隆做一次）：
 #   git config core.hooksPath .githooks
 # 临时跳过（仅在明确知道自己在做什么时）：
 #   git commit --no-verify
+#
+# 语言纪律检查在 pytest 里（tests/test_check_language.py），不单独加一步。
 set -euo pipefail
 
-uv run ruff check .
-uv run pytest
+run() {
+  # 优先用项目虚拟环境：沙箱里 uv 可能建不了自己的缓存（os error 5），
+  # 见 ~/.dsh/docs/windows-shell.md。
+  if [ -x .venv/Scripts/python.exe ]; then
+    .venv/Scripts/python.exe -m "$@"
+  elif [ -x .venv/bin/python ]; then
+    .venv/bin/python -m "$@"
+  else
+    uv run "$@"
+  fi
+}
+
+run ruff check .
+run pytest

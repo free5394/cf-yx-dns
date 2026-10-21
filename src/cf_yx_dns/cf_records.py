@@ -138,7 +138,7 @@ def plan_sync(name, target_ips, store):
 
     Raises:
         DnsSyncError: 目标 IP 列表为空 —— 此时拒绝同步，绝不执行删除，
-            避免上游解析异常把该域名的解析清空
+            避免上游解析异常把该记录名的解析清空
     """
     if not target_ips:
         raise DnsSyncError("目标 IP 列表为空，拒绝同步（不执行任何新增或删除）")
@@ -161,7 +161,7 @@ def plan_sync(name, target_ips, store):
 def apply_sync(name, plan, store):
     """按计划执行同步：先新增缺失记录，再删除多余旧记录。
 
-    先增后删保证同步过程中该域名始终保有可用的解析记录（见
+    先增后删保证同步过程中该记录名始终保有可用的解析记录（见
     ``docs/adr/0002-create-before-delete-sync-order.md``）；单条失败不中断其余条目，
     也不做事务回滚。
 
