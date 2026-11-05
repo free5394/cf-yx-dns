@@ -25,7 +25,7 @@ def env(monkeypatch):
 
 
 class TestPushPlus:
-    def test_success_payload_and_returns_true(self, monkeypatch):
+    def test_success_payload_and_returns_true(self, monkeypatch, capsys):
         calls = []
 
         def fake_post(url, json, timeout):
@@ -35,6 +35,7 @@ class TestPushPlus:
         monkeypatch.setattr(notify.httpx, "post", fake_post)
 
         assert notify.push_plus("正文") is True
+        assert "消息推送成功" in capsys.readouterr().out
         assert calls[0]["url"] == notify.PUSHPLUS_URL
         assert calls[0]["timeout"] == config.DEFAULT_TIMEOUT
         assert calls[0]["json"] == {
@@ -60,14 +61,18 @@ class TestPushPlus:
         )
 
         assert notify.push_plus("正文") is False
-        assert "消息推送失败" in capsys.readouterr().out
+        captured = capsys.readouterr()
+        assert "消息推送失败" in captured.err
+        assert "token 无效" in captured.err
+        assert captured.out == ""  # 失败信息只走 stderr，不污染执行结果正文
 
-    def test_http_error_returns_false(self, monkeypatch):
+    def test_http_error_returns_false(self, monkeypatch, capsys):
         monkeypatch.setattr(notify.httpx, "post", lambda url, json, timeout: FakeResponse(status_code=502))
 
         assert notify.push_plus("正文") is False
+        assert "HTTP 502" in capsys.readouterr().err
 
-    def test_invalid_json_returns_false(self, monkeypatch):
+    def test_invalid_json_returns_false(self, monkeypatch, capsys):
         monkeypatch.setattr(
             notify.httpx,
             "post",
@@ -75,14 +80,16 @@ class TestPushPlus:
         )
 
         assert notify.push_plus("正文") is False
+        assert "消息推送失败" in capsys.readouterr().err
 
-    def test_network_error_returns_false(self, monkeypatch):
+    def test_network_error_returns_false(self, monkeypatch, capsys):
         def boom(url, json, timeout):
             raise OSError("network down")
 
         monkeypatch.setattr(notify.httpx, "post", boom)
 
         assert notify.push_plus("正文") is False
+        assert "network down" in capsys.readouterr().err
 
     def test_without_token_skips(self, monkeypatch, capsys):
         monkeypatch.delenv("PUSHPLUS_TOKEN")

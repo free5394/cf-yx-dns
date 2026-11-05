@@ -4,6 +4,9 @@
 - 0：成功；--dry-run 差量算出后恒为 0；--check 无差量时为 0；没有待推送内容时不推送
 - 1：前置条件缺失、来源抓取/解析失败、存在 DNS 操作失败、--check 检测到差量、--notify-failure 推送失败
 - 2：--dry-run 与 --check 并传（argparse 用法错误）
+
+正常同步路径上的推送失败不改变退出码，只在 stderr 追加一行「警告: 同步结果推送失败…」；
+只有 --notify-failure 的推送失败才计入退出码 1。
 """
 
 import argparse
@@ -124,7 +127,10 @@ def main(argv=None):
     messages = cf_records.apply_sync(name, plan, store)
     if messages:
         print(messages)
-        notify.push_plus("\n".join(messages))
+        # 推送失败不改退出码（领域约定见 GLOSSARY「推送通道」），但要在 stderr 留一条
+        # 总结结论：否则「DNS 已更新、通知没发出去」这种失联只能靠翻 notify 的细节行看出来。
+        if notify.push_plus("\n".join(messages)) is False:
+            print("警告: 同步结果推送失败（DNS 操作已按上方列表执行）", file=sys.stderr)
 
     errors = [message for message in messages if message.startswith("失败: ")]
     if errors:

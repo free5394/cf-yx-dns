@@ -219,6 +219,34 @@ class TestRealRun:
 
         assert cli.main([]) == 0
 
+    def test_push_failure_warns_on_stderr_but_exits_0(self, monkeypatch, env, capsys):
+        """推送失败不改退出码（GLOSSARY「推送通道」），但必须在 stderr 留一条总结警告。"""
+        stub_source(monkeypatch)
+        stub_plan(monkeypatch, make_plan(["104.16.2.2"]))
+        monkeypatch.setattr(
+            cli.cf_records,
+            "apply_sync",
+            lambda name, plan, store: [f"ip:104.16.2.2 解析 {name} 成功"],
+        )
+        monkeypatch.setattr(cli.notify, "push_plus", lambda content, **kwargs: False)
+
+        assert cli.main([]) == 0
+        assert "警告: 同步结果推送失败" in capsys.readouterr().err
+
+    def test_push_skip_without_token_prints_no_warning(self, monkeypatch, env, capsys):
+        """未配置 Token 是「跳过」不是「失败」，不该产生警告噪音。"""
+        stub_source(monkeypatch)
+        stub_plan(monkeypatch, make_plan(["104.16.2.2"]))
+        monkeypatch.setattr(
+            cli.cf_records,
+            "apply_sync",
+            lambda name, plan, store: [f"ip:104.16.2.2 解析 {name} 成功"],
+        )
+        monkeypatch.setattr(cli.notify, "push_plus", lambda content, **kwargs: None)
+
+        assert cli.main([]) == 0
+        assert "警告" not in capsys.readouterr().err
+
 
 class TestNotifyFailure:
     def test_sends_alert_and_returns_0(self, monkeypatch, env):

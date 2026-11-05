@@ -1,7 +1,11 @@
 """PushPlus 推送。
 
 推送结果分三种：成功、失败、未配置 Token（跳过）。调用方据此决定是否影响退出码。
+失败信息一律走 stderr：推送是唯一的通知通道，它挂掉时必须在日志里留得下痕，
+而 stdout 承载的是执行结果正文，两者混在一起就没人分得清。
 """
+
+import sys
 
 import httpx
 
@@ -45,20 +49,20 @@ def push_plus(content, *, title=SUCCESS_TITLE):
     try:
         response = httpx.post(PUSHPLUS_URL, json=payload, timeout=config.DEFAULT_TIMEOUT)
     except Exception as e:
-        print(f"消息推送失败: {e}")
+        print(f"消息推送失败: {e}", file=sys.stderr)
         return False
 
     if response.status_code != 200:
-        print(f"消息推送失败: HTTP {response.status_code}")
+        print(f"消息推送失败: HTTP {response.status_code}", file=sys.stderr)
         return False
 
     body = _json_body(response)
     if body is None:
-        print("消息推送失败: 响应不是合法 JSON")
+        print("消息推送失败: 响应不是合法 JSON", file=sys.stderr)
         return False
 
     if str(body.get("code")) != "200":
-        print(f"消息推送失败: code={body.get('code')} msg={body.get('msg')}")
+        print(f"消息推送失败: code={body.get('code')} msg={body.get('msg')}", file=sys.stderr)
         return False
 
     print("消息推送成功")

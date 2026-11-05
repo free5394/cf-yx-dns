@@ -221,7 +221,9 @@ uv run src/dnscf.py --check
 
 ### Q: PushPlus 推送失败？
 
-确认 `PUSHPLUS_TOKEN` 配置正确，且 PushPlus 服务可用。推送失败不影响 DNS 更新功能。
+确认 `PUSHPLUS_TOKEN` 配置正确，且 PushPlus 服务可用。
+
+推送失败**不会**改变进程退出码，也不会回滚已经完成的 DNS 操作——所以 **Actions 显示绿色不代表推送成功**。失败时日志里会出现两类 stderr 记录：notify 抛出的 `消息推送失败: …`（含 HTTP 状态码或 PushPlus 的 code/msg），以及 CLI 追加的一行 `警告: 同步结果推送失败（DNS 操作已按上方列表执行）`。看到它们就按上面的顺序查 Token 与服务状态。未配置 `PUSHPLUS_TOKEN` 属于「跳过」而非失败，不会产生这条警告。
 
 ### Q: DNS 记录未更新？
 
