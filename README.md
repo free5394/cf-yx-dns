@@ -205,6 +205,8 @@ uv run src/dnscf.py --check
 └─────────────────┘
 ```
 
+> 新增阶段只要有失败，本次就整体跳过删除阶段（推送正文会出现一条「跳过: …」说明），旧记录保留到下次成功执行再收敛。这条约束见 [`docs/adr/0002-create-before-delete-sync-order.md`](docs/adr/0002-create-before-delete-sync-order.md) 的修订一节。
+
 ## 常见问题
 
 ### Q: 程序执行失败如何排查？

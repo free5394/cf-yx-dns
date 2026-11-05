@@ -32,12 +32,14 @@ class FakeRecordStore:
         existing_records: 记录名下的现有记录
         create_error: 触发时 ``create_record`` 抛出的异常
         delete_error: 触发时 ``delete_record`` 抛出的异常
+        create_error_by_type: 按记录类型触发的异常，用于构造「部分类型新增失败」
     """
 
-    def __init__(self, existing_records=(), create_error=None, delete_error=None):
+    def __init__(self, existing_records=(), create_error=None, delete_error=None, create_error_by_type=None):
         self.existing_records = list(existing_records)
         self.create_error = create_error
         self.delete_error = delete_error
+        self.create_error_by_type = dict(create_error_by_type or {})
         self.events = []
         self.created = []
         self.deleted = []
@@ -49,8 +51,9 @@ class FakeRecordStore:
     def create_record(self, name, record_type, content, *, proxied=False):
         self.events.append("create")
         self.created.append({"name": name, "type": record_type, "content": content, "proxied": proxied})
-        if self.create_error is not None:
-            raise self.create_error
+        error = self.create_error_by_type.get(record_type, self.create_error)
+        if error is not None:
+            raise error
 
     def delete_record(self, record_id):
         self.events.append("delete")
@@ -191,6 +194,38 @@ class TestApplySync:
         assert len(messages) == 2
         assert all(m.startswith("失败: ") for m in messages)
         assert "boom" in messages[0]
+
+    def test_create_failure_skips_delete_phase(self):
+        """新增阶段有失败时一条旧记录都不删：否则可能把记录名清空。"""
+        plan = SyncPlan(
+            to_create=["104.16.2.2"],
+            to_delete=[make_record(content="104.16.1.1")],
+            proxied_by_type={"A": False},
+        )
+        store = FakeRecordStore(create_error=RuntimeError("boom"))
+
+        messages = cf_records.apply_sync(NAME, plan, store)
+
+        assert "delete" not in store.events
+        assert store.deleted == []
+        assert messages[0] == f"失败: ip:104.16.2.2 新增 {NAME} 失败 - boom"
+        assert messages[1] == "跳过: 新增阶段存在失败，本次不删除 1 条旧记录（保持现有解析，待下次执行收敛）"
+
+    def test_partial_create_failure_skips_delete_phase(self):
+        """只有一种类型新增成功也整体跳过删除：删除阶段不做按类型的部分收敛。"""
+        plan = SyncPlan(
+            to_create=["104.16.2.2", "2606:4700:0:9623::82a0"],
+            to_delete=[make_record(content="104.16.1.1")],
+            proxied_by_type={"A": False, "AAAA": False},
+        )
+        store = FakeRecordStore(create_error_by_type={"AAAA": RuntimeError("boom")})
+
+        messages = cf_records.apply_sync(NAME, plan, store)
+
+        assert store.created[0]["content"] == "104.16.2.2"  # A 记录确实新增成功
+        assert [event for event in store.events if event == "create"] == ["create", "create"]
+        assert "delete" not in store.events
+        assert any(message.startswith("跳过: 新增阶段存在失败") for message in messages)
 
     def test_delete_failure_is_collected(self):
         """删除失败同样收集成失败消息，不影响前面已成功的条目。"""

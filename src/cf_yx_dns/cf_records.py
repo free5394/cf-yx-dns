@@ -9,7 +9,8 @@
 传入的实现决定 —— Cloudflare 实现在 ``cf_record_store``，测试注入替身即可。
 
 失败语义：记录存储的写操作失败即抛异常，由 ``apply_sync`` 统一收集成成功/失败消息 ——
-不存在「返回错误字符串却被当成成功」的中间态。
+不存在「返回错误字符串却被当成成功」的中间态；新增阶段出现失败时删除阶段整体跳过，
+避免这次同步对记录名做减法。
 """
 
 from dataclasses import dataclass, field
@@ -165,6 +166,12 @@ def apply_sync(name, plan, store):
     ``docs/adr/0002-create-before-delete-sync-order.md``）；单条失败不中断其余条目，
     也不做事务回滚。
 
+    **新增阶段只要有一条失败，就整体跳过删除阶段**：删除是减法，此刻执行会让记录名
+    从「新旧并存的超集」缩成子集，极端情况下（唯一一条旧记录被删、新增又失败）会把
+    该记录名的解析清空 —— 正是先增后删要避免的中断。跳过删除后旧记录仍在，下一次
+    执行会重新收敛；因此不做按记录类型的部分删除，避免出现「A 删了、AAAA 留着」这种
+    更难解释的半收敛状态。
+
     消息在此一次性产出最终文案（失败消息自带「失败: 」前缀），推送内容只有一个来源，
     CLI 不再二次加工。
 
@@ -174,9 +181,11 @@ def apply_sync(name, plan, store):
         store: 记录存储（用到「新建一条记录」与「删除一条记录」两个操作）
 
     Returns:
-        list[str]: 最终消息列表（成功与失败按发生顺序混排，失败自带前缀）
+        list[str]: 最终消息列表（成功与失败按发生顺序混排，失败自带前缀；
+            跳过删除时追加一条「跳过: …」说明）
     """
     messages = []
+    create_failed = False
 
     for ip in plan.to_create:
         try:
@@ -184,8 +193,16 @@ def apply_sync(name, plan, store):
             store.create_record(name, record_type, content, proxied=plan.proxied_by_type.get(record_type, False))
         except Exception as e:
             messages.append(f"失败: ip:{ip} 新增 {name} 失败 - {e}")
+            create_failed = True
             continue
         messages.append(f"ip:{content} 解析 {name} 成功")
+
+    if create_failed and plan.to_delete:
+        messages.append(
+            f"跳过: 新增阶段存在失败，本次不删除 {len(plan.to_delete)} 条旧记录"
+            "（保持现有解析，待下次执行收敛）"
+        )
+        return messages
 
     for record in plan.to_delete:
         try:
