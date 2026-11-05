@@ -8,7 +8,9 @@ on:
         - cron: "23 */6 * * *"
     workflow_dispatch:
 
-# 定时任务与手动触发可能重叠；排队执行而不是并发，避免两轮同步互相踩到差量计算
+# 并发边界：group 是固定字符串，跟触发方式无关，所以定时与手动触发共用同一个队列，
+# 同一时刻只会有一轮同步在跑；正在跑的那轮不会被取消，后来的排队等待。
+# 这条只覆盖 Actions 内部的触发方式——本地手动运行不受约束，见 docs/adr/0003-concurrency-boundary.md。
 concurrency:
     group: dns_cf_push
     cancel-in-progress: false
@@ -16,6 +18,9 @@ concurrency:
 jobs:
     build:
         runs-on: ubuntu-latest
+        # 兜底：挂住的运行会一直占着上面那个 group，而同组只保留一个 pending 运行，
+        # 后续触发会互相顶掉，表现为「定时任务悄悄不再执行」。超时强制释放。
+        timeout-minutes: 15
         permissions:
             contents: read
             actions: write

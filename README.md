@@ -229,6 +229,12 @@ uv run src/dnscf.py --check
 
 检查 Cloudflare API Token 权限是否包含 DNS 编辑权限。
 
+### Q: 手动触发会和定时任务同时跑吗？
+
+在 Actions 里不会。定时与手动触发共用同一个 `concurrency` group（`group` 是固定字符串，与触发方式无关），正在跑的那轮不会被取消，手动触发会排队等待；作业有 15 分钟超时兜底，避免挂住的运行长期占住队列。
+
+**本地直接运行不受这条约束。** 本地进程和 Actions 任务之间没有互斥，两轮会各读一次记录快照，重叠时可能重复创建同一条记录——而差量同步只删除「内容不在目标集合里」的记录，所以重复的同名同内容记录不会被后续运行清理，需要手工删除。要在本地调试就先停掉定时任务。细节见 [`docs/adr/0003-concurrency-boundary.md`](docs/adr/0003-concurrency-boundary.md)。
+
 ## 贡献指南
 
 欢迎提交 Issue 和 Pull Request。
