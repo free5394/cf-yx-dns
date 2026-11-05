@@ -104,16 +104,19 @@ def _comparison_key(record):
 
 
 def _target_key(ip):
-    """目标 IP 的身份键：类型由地址族推导，与 ``_comparison_key`` 对齐。
+    """目标 IP 的身份键：类型由地址族推导，内容也规范化，与 ``_comparison_key`` 对齐。
+
+    两边都做规范化，键才真正可比：调用方即使传进来 IPv6 的展开写法，也能与现有记录的
+    压缩写法命中同一条目，不会凭空多出一次「新增 + 删除」。
 
     Args:
-        ip: 目标 IP（规范化字符串）
+        ip: 目标 IP 字符串
 
     Returns:
         tuple: (记录类型, 规范化 IP)；IP 非法时类型为 None，不会匹配任何现有记录，
             随后在建记录阶段被 ``_canonical_create_target`` 判为失败
     """
-    return (ips.record_type(ips.parse_ip(ip)), ip)
+    return (ips.record_type(ips.parse_ip(ip)), ips.canonicalize(ip) or ip)
 
 
 def compute_diff(existing_records, target_ips):

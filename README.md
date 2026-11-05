@@ -262,7 +262,8 @@ git config core.hooksPath .githooks
 
 语言纪律（中文提示语、`GLOSSARY.md` 词表禁用词）由 `tools/check_language.py` 检查，`tests/test_check_language.py` 覆盖它，所以跑 pytest 就等于跑了这道检查。
 
-它是**机械最低线**，不是全量覆盖：只查 `print(...)` 与 `raise ...(...)` 参数里第一段字符串字面量有没有中文，外加词表里明确列为「避免」的错词。`logging`、`sys.stderr.write`、先拼好字符串再 `print(value)` 这类写法它看不到；术语首次出现要标注中文释义、语序与语义是否通顺，仍按 [`CODING_STANDARDS.md`](CODING_STANDARDS.md) 人工评审。
+它是**机械最低线**，不是全量覆盖：只查 `print(...)` 与 `raise ...(...)` 参数里第一段字符串字面量有没有中文，外加两个硬编码的禁用词——`域名`（该写「记录名」）与 `优质 IP`（该写「优选 IP」）；默认只扫 `src`。词表里其余的「避免」项（节点、线路）和「术语首次出现标注中文释义」都是判断项，脚本不管。`logging`、`sys.stderr.write`、先拼好字符串再 `print(value)` 这类写法它也看不到——语义与释义仍按 [`CODING_STANDARDS.md`](CODING_STANDARDS.md) 人工评审。
+
 
 ## 许可证
 

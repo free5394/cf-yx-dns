@@ -98,6 +98,23 @@ class TestFetchIpSource:
             ips.fetch_ip_source(max_retries=5)
         assert len(reads) == 1
 
+    def test_invalid_source_url_reports_once_without_retry(self, monkeypatch, capsys):
+        """地址格式非法属配置错误：不重试、不 traceback，返回 None 交回 CLI 报错。"""
+        sleeps = []
+        calls = []
+
+        def boom(url, timeout):
+            calls.append(url)
+            raise httpx.InvalidURL("Invalid port: 'abc'")
+
+        monkeypatch.setattr(ips.config, "cf_yx_url", lambda: "http://example.com:abc/ipTop.html")
+        monkeypatch.setattr(ips.httpx, "get", boom)
+        monkeypatch.setattr(ips.time, "sleep", sleeps.append)
+        assert ips.fetch_ip_source(max_retries=5) is None
+        assert len(calls) == 1
+        assert sleeps == []
+        assert "来源地址无效" in capsys.readouterr().out
+
 
 class TestCanonicalize:
     def test_ipv4_passthrough(self):

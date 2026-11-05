@@ -123,12 +123,19 @@ class TestComputeDiff:
         assert to_create == ["2606:4700::1"]
         assert to_delete == [mismatched]
 
-    def test_same_content_same_family_stays_unchanged(self):
-        """类型与内容族匹配时仍按地址身份判等（含展开/压缩写法），不会重复创建。"""
-        existing = [make_record(record_type="AAAA", content="2606:4700:0:0:0:0:0:1")]
-        to_create, to_delete = cf_records.compute_diff([existing[0]], ["2606:4700::1"])
+    def test_expanded_target_matches_compressed_existing_record(self):
+        """目标传展开写法、现有记录是压缩写法时也判等。
+
+        两侧身份键都做规范化才能命中；只规范化现有记录一侧，会让同一个地址凭空多出
+        一次「新增 + 删除」，写回后又被规范回压缩写法，白折腾一轮。
+        """
+        existing = make_record(record_type="AAAA", content="2606:4700::1")
+        to_create, to_delete = cf_records.compute_diff(
+            [existing], ["2606:4700:0000:0000:0000:0000:0000:0001"]
+        )
         assert to_create == []
         assert to_delete == []
+
 
 
 # --- plan_sync ------------------------------------------------------------

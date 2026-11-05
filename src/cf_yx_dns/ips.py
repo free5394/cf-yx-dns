@@ -28,6 +28,10 @@ def fetch_ip_source(timeout=config.DEFAULT_TIMEOUT, max_retries=5):
     只重试网络层的问题——``httpx.HTTPError``（连接失败、超时、代理错误等）与非 200 状态码，
     按指数退避（1s/2s/4s/8s）重试，最后一次失败后不再等待。
 
+    来源地址本身非法（``httpx.InvalidURL``）属于**配置错误**：重试同一个坏地址不会变好，
+    所以直接打印中文错误并返回 None，交给 CLI 沿用既有的「获取失败」路径报错退出——
+    既不静默吞掉，也不以 traceback 形式甩给用户。
+
     **其余异常不重试、直接抛出**：重试只对「再试一次可能就好了」的情况有意义，编程错误
     （参数拼错、返回值用错之类）重试五次只会拖慢十几秒，再把它伪装成「网络不通」，最后
     连真正的原因都读不出来。同理，来源地址只在进循环前读一次，配置读取失败也不该被重试掩盖。
@@ -46,6 +50,9 @@ def fetch_ip_source(timeout=config.DEFAULT_TIMEOUT, max_retries=5):
             if response.status_code == 200:
                 return response.text
             print(f"获取优选 IP 失败 (尝试 {attempt + 1}/{max_retries}): HTTP {response.status_code}")
+        except httpx.InvalidURL as e:
+            print(f"获取优选 IP 失败: 来源地址无效（CF_YX_URL）: {e}")
+            return None
         except httpx.HTTPError as e:
             print(f"获取优选 IP 失败 (尝试 {attempt + 1}/{max_retries}): {e}")
         if attempt < max_retries - 1:
