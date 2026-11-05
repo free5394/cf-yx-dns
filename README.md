@@ -231,7 +231,9 @@ uv run src/dnscf.py --check
 
 ### Q: 手动触发会和定时任务同时跑吗？
 
-在 Actions 里不会。定时与手动触发共用同一个 `concurrency` group（`group` 是固定字符串，与触发方式无关），正在跑的那轮不会被取消，手动触发会排队等待；作业有 15 分钟超时兜底，避免挂住的运行长期占住队列。
+在 Actions 里不会。`dns_cf_push` 这个工作流的定时与手动触发共用同一个 `concurrency` group（`group` 是固定字符串，与触发方式无关），正在跑的那轮不会被取消，手动触发会排队等待；作业有 15 分钟超时兜底，避免挂住的运行长期占住队列。**这个互斥只覆盖本工作流的这两类触发**，别的 workflow 不在其内。
+
+注意超时的语义是强制取消而不是失败：被超时取消时，工作流里 `if: failure()` 的推送告警不保证发出，只能从 Actions 的红色运行记录里发现。这一点在 [`docs/adr/0003-concurrency-boundary.md`](docs/adr/0003-concurrency-boundary.md) 里记为已知残留风险。
 
 **本地直接运行不受这条约束。** 本地进程和 Actions 任务之间没有互斥，两轮会各读一次记录快照，重叠时可能重复创建同一条记录——而差量同步只删除「内容不在目标集合里」的记录，所以重复的同名同内容记录不会被后续运行清理，需要手工删除。要在本地调试就先停掉定时任务。细节见 [`docs/adr/0003-concurrency-boundary.md`](docs/adr/0003-concurrency-boundary.md)。
 

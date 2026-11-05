@@ -8,9 +8,10 @@ on:
         - cron: "23 */6 * * *"
     workflow_dispatch:
 
-# 并发边界：group 是固定字符串，跟触发方式无关，所以定时与手动触发共用同一个队列，
-# 同一时刻只会有一轮同步在跑；正在跑的那轮不会被取消，后来的排队等待。
-# 这条只覆盖 Actions 内部的触发方式——本地手动运行不受约束，见 docs/adr/0003-concurrency-boundary.md。
+# 并发边界：group 是固定字符串，跟触发方式无关，所以本工作流的定时（schedule）与手动
+# （workflow_dispatch）两类触发共用同一个队列，同一时刻只会有一轮同步在跑；正在跑的那轮
+# 不会被取消，后来的排队等待。范围仅限这两类触发——别的 workflow 不在保护内，
+# 本地手动运行也不受约束，见 docs/adr/0003-concurrency-boundary.md。
 concurrency:
     group: dns_cf_push
     cancel-in-progress: false

@@ -137,7 +137,7 @@ All checks passed!
 | --- | --- | --- | --- |
 | P1 | 新增阶段失败后仍删除多余记录 | 已修复（`d11c851`） | 任一新增失败即整体跳过删除阶段，并追加「跳过: …」说明；补两条回归测试；ADR 0002 增「修订（2026-11-05）」一节 |
 | P2 | 正常同步路径推送失败只写 stdout、任务仍绿色退出 | 已修复（`bbfb33f`） | notify 失败分支改走 stderr；CLI 接住返回值并追加「警告: 同步结果推送失败」；退出码语义按 GLOSSARY「推送通道」保持不变 |
-| P2 | `dns_cf.yml` 的 `concurrency` 只保护同名 workflow | 已处理 | 定时与手动触发本就共用同一个 group（静态字符串），互斥已经成立；补 15 分钟 `timeout-minutes` 防止挂起的运行饿死队列，边界与残留风险写入 ADR 0003 与 README。跨 workflow 的作业级互斥未引入——没有可共享的锁介质，见 ADR 0003 决策 5 |
+| P2 | `dns_cf.yml` 的 `concurrency` 只保护同名 workflow | 已处理 | 定时与手动触发本就共用同一个 group（静态字符串），互斥已经成立；补 15 分钟 `timeout-minutes` 防止挂起的运行饿死队列，边界与残留风险写入 ADR 0003 与 README。跨 workflow 的作业级互斥未引入——没有可共享的锁介质，见 ADR 0003 决策 5。超时是强制取消而非失败，`if: failure()` 的告警在这种强杀下不保证发出，已在 ADR 0003「后果」中记为残留风险 |
 | P3 | `_comparison_key` 忽略 `record.type`、`.env.example` 默认来源非默认值、`ips.py` 的 `except Exception` 过宽、`check_language.py` 只查首个字面量 | 未处理 | 影响面较小，按需排期 |
 
 正文第 2 条（推送失败只写 stdout）的「建议修复方向」里提到的 `--strict-notify` 本轮未采纳：它会打破「推送失败不影响 DNS 同步结果」这条既有约定，需要连带改文档与 CI 语义，属于单独决策。
