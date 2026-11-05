@@ -260,6 +260,10 @@ uv run pytest
 git config core.hooksPath .githooks
 ```
 
+语言纪律（中文提示语、`GLOSSARY.md` 词表禁用词）由 `tools/check_language.py` 检查，`tests/test_check_language.py` 覆盖它，所以跑 pytest 就等于跑了这道检查。
+
+它是**机械最低线**，不是全量覆盖：只查 `print(...)` 与 `raise ...(...)` 参数里第一段字符串字面量有没有中文，外加词表里明确列为「避免」的错词。`logging`、`sys.stderr.write`、先拼好字符串再 `print(value)` 这类写法它看不到；术语首次出现要标注中文释义、语序与语义是否通顺，仍按 [`CODING_STANDARDS.md`](CODING_STANDARDS.md) 人工评审。
+
 ## 许可证
 
 本项目基于 [Apache License 2.0](LICENSE) 开源许可。

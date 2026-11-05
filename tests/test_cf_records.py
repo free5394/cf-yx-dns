@@ -112,6 +112,24 @@ class TestComputeDiff:
         assert to_create == ["104.16.1.1"]  # 整条内容不匹配，这个 IP 仍算缺
         assert to_delete == [legacy]
 
+    def test_type_mismatched_record_is_not_counted_as_existing(self):
+        """类型与内容族不匹配的记录不算「已存在」。
+
+        A 记录里存 IPv6（历史上被手工导入/外部脚本写入）时，目标 IPv6 仍然要新建 AAAA，
+        这条异常 A 记录也要判为待删除；只按内容比较会让两者同时漏掉，目标状态永不达成。
+        """
+        mismatched = make_record(record_type="A", content="2606:4700::1")
+        to_create, to_delete = cf_records.compute_diff([mismatched], ["2606:4700::1"])
+        assert to_create == ["2606:4700::1"]
+        assert to_delete == [mismatched]
+
+    def test_same_content_same_family_stays_unchanged(self):
+        """类型与内容族匹配时仍按地址身份判等（含展开/压缩写法），不会重复创建。"""
+        existing = [make_record(record_type="AAAA", content="2606:4700:0:0:0:0:0:1")]
+        to_create, to_delete = cf_records.compute_diff([existing[0]], ["2606:4700::1"])
+        assert to_create == []
+        assert to_delete == []
+
 
 # --- plan_sync ------------------------------------------------------------
 

@@ -69,6 +69,35 @@ class TestFetchIpSource:
         monkeypatch.setattr(ips.time, "sleep", lambda seconds: None)
         assert ips.fetch_ip_source(max_retries=3) is None
 
+    def test_programming_error_is_not_retried(self, monkeypatch):
+        """非网络异常直接抛出，不重试也不退避：编程错误不该被伪装成「网络不通」。"""
+        sleeps = []
+        calls = []
+
+        def boom(url, timeout):
+            calls.append(url)
+            raise TypeError("参数拼错了")
+
+        monkeypatch.setattr(ips.httpx, "get", boom)
+        monkeypatch.setattr(ips.time, "sleep", sleeps.append)
+        with pytest.raises(TypeError):
+            ips.fetch_ip_source(max_retries=5)
+        assert len(calls) == 1  # 只尝试一次
+        assert sleeps == []
+
+    def test_source_url_read_once_before_retry(self, monkeypatch):
+        """来源地址在进循环前读一次：配置读取失败不会被重试掩盖。"""
+        reads = []
+
+        def broken_config():
+            reads.append(1)
+            raise RuntimeError("配置读不出来")
+
+        monkeypatch.setattr(ips.config, "cf_yx_url", broken_config)
+        with pytest.raises(RuntimeError):
+            ips.fetch_ip_source(max_retries=5)
+        assert len(reads) == 1
+
 
 class TestCanonicalize:
     def test_ipv4_passthrough(self):

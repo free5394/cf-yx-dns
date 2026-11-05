@@ -86,12 +86,34 @@ def _canonical_create_target(name, ip):
 
 
 def _comparison_key(record):
-    """记录内容用于差量比较的键。
+    """记录的身份键：记录类型 + 规范化 IP。
 
-    以规范化 IP 身份为准，这样展开写法与压缩写法被视为同一条记录；内容不是公网 IP
-    （异常数据、历史遗留）时退化为原始字符串，仍会被判为「需要删除」。
+    身份里必须带类型，因为 A 与 AAAA 是两条彼此独立的记录。若历史或外部数据里存在
+    「A 记录存 IPv6」这种类型与内容族不匹配的记录，只按内容比较会把目标 IPv6 判成
+    「已存在」：AAAA 不创建、这条异常记录也不删除，目标状态永远不达成。
+
+    内容不是公网 IP（异常数据、历史遗留）时退化为原始字符串，仍会被判为「需要删除」。
+
+    Args:
+        record: 一条受管辖的记录
+
+    Returns:
+        tuple: (记录类型, 规范化内容)
     """
-    return ips.canonicalize(record.content) or record.content
+    return (record.type, ips.canonicalize(record.content) or record.content)
+
+
+def _target_key(ip):
+    """目标 IP 的身份键：类型由地址族推导，与 ``_comparison_key`` 对齐。
+
+    Args:
+        ip: 目标 IP（规范化字符串）
+
+    Returns:
+        tuple: (记录类型, 规范化 IP)；IP 非法时类型为 None，不会匹配任何现有记录，
+            随后在建记录阶段被 ``_canonical_create_target`` 判为失败
+    """
+    return (ips.record_type(ips.parse_ip(ip)), ip)
 
 
 def compute_diff(existing_records, target_ips):
@@ -105,9 +127,9 @@ def compute_diff(existing_records, target_ips):
         tuple[list[str], list[ManagedRecord]]: (待新增 IP 列表, 待删除记录列表)
     """
     target = list(dict.fromkeys(target_ips))
-    target_keys = set(target)
+    target_keys = {_target_key(ip) for ip in target}
     existing_keys = {_comparison_key(record) for record in existing_records}
-    to_create = [ip for ip in target if ip not in existing_keys]
+    to_create = [ip for ip in target if _target_key(ip) not in existing_keys]
     to_delete = [record for record in existing_records if _comparison_key(record) not in target_keys]
     return to_create, to_delete
 

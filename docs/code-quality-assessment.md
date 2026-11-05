@@ -138,6 +138,12 @@ All checks passed!
 | P1 | 新增阶段失败后仍删除多余记录 | 已修复（`d11c851`） | 任一新增失败即整体跳过删除阶段，并追加「跳过: …」说明；补两条回归测试；ADR 0002 增「修订（2026-11-05）」一节 |
 | P2 | 正常同步路径推送失败只写 stdout、任务仍绿色退出 | 已修复（`bbfb33f`） | notify 失败分支改走 stderr；CLI 接住返回值并追加「警告: 同步结果推送失败」；退出码语义按 GLOSSARY「推送通道」保持不变 |
 | P2 | `dns_cf.yml` 的 `concurrency` 只保护同名 workflow | 已处理 | 定时与手动触发本就共用同一个 group（静态字符串），互斥已经成立；补 15 分钟 `timeout-minutes` 防止挂起的运行饿死队列，边界与残留风险写入 ADR 0003 与 README。跨 workflow 的作业级互斥未引入——没有可共享的锁介质，见 ADR 0003 决策 5。超时是强制取消而非失败，`if: failure()` 的告警在这种强杀下不保证发出，已在 ADR 0003「后果」中记为残留风险 |
-| P3 | `_comparison_key` 忽略 `record.type`、`.env.example` 默认来源非默认值、`ips.py` 的 `except Exception` 过宽、`check_language.py` 只查首个字面量 | 未处理 | 影响面较小，按需排期 |
+| P3-4 | 差量比较忽略 `record.type` | 已修复 | 核实为真问题但触发面窄：本工具创建时类型由内容推导（`cf_records.py` 的 `_canonical_create_target`），Cloudflare API 也校验类型/内容族，错配只能来自外部导入或历史数据。仍按建议改为「类型 + 规范化 IP」判等：`_comparison_key` 返回 `(record.type, canonical)`、新增 `_target_key(ip)`，错配记录现在会判为待删除。补两条测试（错配不算已存在；同族不同写法不重复创建）；GLOSSARY「规范化 IP」补记录身份定义 |
+| P3-5 | `.env.example` 复制后默认切到非默认来源 | 已修复 | `.env.example` 里 `CF_YX_URL` 改为注释状态，写明「不设置即默认 `https://ip.164746.xyz/ipTop.html`，下面这行只是示例」。凭据占位行未改动 |
+| P3-6 | `ips.py` 抓取重试捕获所有 `Exception` | 已修复 | 收窄为 `except httpx.HTTPError`；来源地址提到循环外只读一次（配置读取失败不再被重试掩盖）；非网络异常直接抛出。补两条测试（编程错误只尝试一次且不退避；地址只读一次）。CLI 侧未加兜底，编程错误以 traceback 直接暴露，属刻意 fail-fast |
+| P3-7 | `check_language.py` 只查 `print`/`raise` 首个字面量 | 已补文档（不改代码） | 核实为报告自己认定的「已知范围限制」，脚本 docstring 早已声明不做语义判断。README「开发环境」写明它是机械最低线（`logging`、`sys.stderr.write`、先拼字符串再 `print` 都看不到），术语释义与语义仍按 `CODING_STANDARDS.md` 人工评审 |
 
 正文第 2 条（推送失败只写 stdout）的「建议修复方向」里提到的 `--strict-notify` 本轮未采纳：它会打破「推送失败不影响 DNS 同步结果」这条既有约定，需要连带改文档与 CI 语义，属于单独决策。
+
+P3 四条处理后的检查结果（2026-11-06）：`pytest` **102 passed**（上述改动新增 4 条测试）、`ruff check .` 全绿、`tools/check_language.py` 通过（9 个文件）、`actionlint` 退出码 0。
+
