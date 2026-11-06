@@ -161,7 +161,7 @@ def plan_sync(name, target_ips, store):
 
     Args:
         name: DNS 记录名
-        target_ips: 目标 IP 列表（规范化字符串）
+        target_ips: 目标 IP 列表（允许含非规范写法的合法地址，函数内部统一规范化）
         store: 记录存储（只用到「列出记录名下的管辖记录」这一操作）
 
     Returns:
