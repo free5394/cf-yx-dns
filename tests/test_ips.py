@@ -99,7 +99,11 @@ class TestFetchIpSource:
         assert len(reads) == 1
 
     def test_invalid_source_url_reports_once_without_retry(self, monkeypatch, capsys):
-        """地址格式非法属配置错误：不重试、不 traceback，返回 None 交回 CLI 报错。"""
+        """URL 配置非法属配置错误：不重试、不抛 traceback（堆栈回溯），返回 None 交回 CLI。
+
+        文案写「请求 URL 或代理配置无效」而不是独占归因于 ``CF_YX_URL``：``httpx`` 默认
+        ``trust_env=True``，非法的 ``HTTP_PROXY`` 同样在构造客户端时抛 ``InvalidURL``。
+        """
         sleeps = []
         calls = []
 
@@ -113,7 +117,7 @@ class TestFetchIpSource:
         assert ips.fetch_ip_source(max_retries=5) is None
         assert len(calls) == 1
         assert sleeps == []
-        assert "来源地址无效" in capsys.readouterr().out
+        assert "请求 URL 或代理配置无效" in capsys.readouterr().out
 
 
 class TestCanonicalize:

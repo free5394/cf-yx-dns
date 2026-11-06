@@ -122,14 +122,19 @@ def _target_key(ip):
 def compute_diff(existing_records, target_ips):
     """计算差量。
 
+    目标 IP 在这里统一规范化：``SyncPlan.to_create`` 承诺是「规范化 IP 列表」，这个承诺
+    必须由本函数自己兑现——否则调用方传 IPv6 展开写法时，``--dry-run`` 会打印未规范化
+    的字符串，同一地址的两种写法也去不了重。写入阶段本来也会规范化，落到 Cloudflare 的
+    值不受影响。
+
     Args:
         existing_records: 受管辖类型下的现有记录
-        target_ips: 目标 IP 列表（规范化字符串）
+        target_ips: 目标 IP 列表（允许含非规范写法的合法地址）
 
     Returns:
         tuple[list[str], list[ManagedRecord]]: (待新增 IP 列表, 待删除记录列表)
     """
-    target = list(dict.fromkeys(target_ips))
+    target = list(dict.fromkeys(ips.canonicalize(ip) or ip for ip in target_ips))
     target_keys = {_target_key(ip) for ip in target}
     existing_keys = {_comparison_key(record) for record in existing_records}
     to_create = [ip for ip in target if _target_key(ip) not in existing_keys]

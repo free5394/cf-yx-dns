@@ -136,6 +136,20 @@ class TestComputeDiff:
         assert to_create == []
         assert to_delete == []
 
+    def test_missing_target_is_returned_canonical_and_deduped(self):
+        """待新增列表自己是规范化写法，且同一地址的两种写法只算一条。
+
+        `SyncPlan.to_create` 对外承诺是「规范化 IP 列表」，这个承诺得由 compute_diff 兑现，
+        否则 `--dry-run` 会把展开写法原样打印出来。
+        """
+        to_create, to_delete = cf_records.compute_diff(
+            [],
+            ["2606:4700:0000:0000:0000:0000:0000:0001", "2606:4700::1"],
+        )
+        assert to_create == ["2606:4700::1"]
+        assert to_delete == []
+
+
 
 
 # --- plan_sync ------------------------------------------------------------

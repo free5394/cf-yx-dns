@@ -264,7 +264,6 @@ git config core.hooksPath .githooks
 
 它是**机械最低线**，不是全量覆盖：只查 `print(...)` 与 `raise ...(...)` 参数里第一段字符串字面量有没有中文，外加两个硬编码的禁用词——`域名`（该写「记录名」）与 `优质 IP`（该写「优选 IP」）；默认只扫 `src`。词表里其余的「避免」项（节点、线路）和「术语首次出现标注中文释义」都是判断项，脚本不管。`logging`、`sys.stderr.write`、先拼好字符串再 `print(value)` 这类写法它也看不到——语义与释义仍按 [`CODING_STANDARDS.md`](CODING_STANDARDS.md) 人工评审。
 
-
 ## 许可证
 
 本项目基于 [Apache License 2.0](LICENSE) 开源许可。
