@@ -22,4 +22,13 @@ run() {
 }
 
 run ruff check .
+
+# 工作流检查：CI 里有硬门禁，本地装了 actionlint 就提前跑一遍。
+# 参数只认 -no-color -oneline（-color=never 会被拒：invalid boolean）。
+if command -v actionlint >/dev/null 2>&1; then
+  actionlint -no-color -oneline
+else
+  echo "提示: 未安装 actionlint，跳过工作流检查（CI 仍会拦）。改了 .github/workflows/ 时请先装，见 README「开发环境」。"
+fi
+
 run pytest
