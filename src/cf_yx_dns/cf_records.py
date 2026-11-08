@@ -11,6 +11,9 @@
 失败语义：记录存储的写操作失败即抛异常，由 ``apply_sync`` 统一收集成成功/失败消息 ——
 不存在「返回错误字符串却被当成成功」的中间态；新增阶段出现失败时删除阶段整体跳过，
 避免这次同步对记录名做减法。
+
+例外是「内容完全相同的记录已存在」（Cloudflare 81057/81058）：那说明目标状态已经达成，
+记录存储把它翻成 ``RecordAlreadyExists``，同步层复查到设置一致的记录后按成功处理。
 """
 
 from dataclasses import dataclass, field
@@ -23,6 +26,22 @@ MANAGED_TYPES = (ips.RECORD_TYPE_IPV4, ips.RECORD_TYPE_IPV6)
 
 class DnsSyncError(RuntimeError):
     """同步前置条件不满足（区别于 Cloudflare API 报错）。"""
+
+
+class RecordAlreadyExists(RuntimeError):
+    """记录存储报告「内容完全相同的记录已存在」（Cloudflare 81057/81058）。
+
+    由记录存储实现抛出（它才认识 SDK 的错误码），同步层据此判断「目标状态已达成」而不是
+    「新增失败」——重叠运行下这一轮算出的新增，另一轮可能已经建好了。
+
+    Args:
+        message: 原始报错文本
+        code: Cloudflare 错误码（81057 / 81058）
+    """
+
+    def __init__(self, message, code):
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -189,6 +208,37 @@ def plan_sync(name, target_ips, store):
     return SyncPlan(to_create=to_create, to_delete=to_delete, proxied_by_type=proxied_by_type)
 
 
+def _find_identical_record(store, name, record_type, content, proxied):
+    """复查记录名下的现有记录，找出与目标完全一致（类型 + 内容 + proxied）的那一条。
+
+    ``RecordAlreadyExists`` 只说明「有一条同内容记录」，Cloudflare 81058 的文案虽然写着
+    "identical settings"，但错误码契约不等于设置一定一致：若 API 对「内容相同、proxied 不同」
+    也回同一个码，直接当成功就会掩盖「目标其实没达成」。所以吞掉之前先看一眼实际记录。
+
+    复查本身失败（列记录报错）时返回 None —— 无法确认就按失败处理，宁可报红一次，也不要把
+    未知状态记成成功。
+
+    Args:
+        store: 记录存储（用到「列出记录名下的管辖记录」这一操作）
+        name: DNS 记录名
+        record_type: 目标记录类型（A/AAAA）
+        content: 目标记录内容（已规范化）
+        proxied: 目标记录的 proxied 取值
+
+    Returns:
+        ManagedRecord | None: 完全一致的那条记录；没有则 None
+    """
+    target = (record_type, ips.canonicalize(content) or content, proxied)
+    try:
+        records = store.list_records(name)
+    except Exception:
+        return None
+    for record in records:
+        if (record.type, ips.canonicalize(record.content) or record.content, record.proxied) == target:
+            return record
+    return None
+
+
 def apply_sync(name, plan, store):
     """按计划执行同步：先新增缺失记录，再删除多余旧记录。
 
@@ -205,6 +255,12 @@ def apply_sync(name, plan, store):
     消息在此一次性产出最终文案（失败消息自带「失败: 」前缀），推送内容只有一个来源，
     CLI 不再二次加工。
 
+    例外是「内容完全相同的记录已存在」（Cloudflare 81057/81058，由记录存储翻成
+    ``RecordAlreadyExists``）：那说明目标状态已经达成 —— 重叠运行下这一轮要新增的记录，
+    另一轮可能刚建好。此时复查到设置一致的记录就按成功处理、不置 ``create_failed``，
+    删除阶段照常执行，让这一轮就收敛，而不是白等一轮。复查不通过（记录不存在或设置不同）
+    仍按失败处理：吞掉它才是真丢信息。
+
     Args:
         name: DNS 记录名
         plan: ``plan_sync`` 算出的计划
@@ -220,7 +276,16 @@ def apply_sync(name, plan, store):
     for ip in plan.to_create:
         try:
             record_type, content = _canonical_create_target(name, ip)
-            store.create_record(name, record_type, content, proxied=plan.proxied_by_type.get(record_type, False))
+            proxied = plan.proxied_by_type.get(record_type, False)
+            store.create_record(name, record_type, content, proxied=proxied)
+        except RecordAlreadyExists as error:
+            proxied = plan.proxied_by_type.get(record_type, False)
+            if _find_identical_record(store, name, record_type, content, proxied) is None:
+                messages.append(f"失败: ip:{ip} 新增 {name} 失败 - {error}")
+                create_failed = True
+                continue
+            messages.append(f"ip:{content} 已存在 {name}（Cloudflare {error.code}），视为成功")
+            continue
         except Exception as e:
             messages.append(f"失败: ip:{ip} 新增 {name} 失败 - {e}")
             create_failed = True

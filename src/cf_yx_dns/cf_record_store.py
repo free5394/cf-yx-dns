@@ -16,12 +16,44 @@ HTTP 传输）—— 它是仓库里唯一一条这样的测试，SDK 变化时�
 
 import time
 
-from cloudflare import Cloudflare
+from cloudflare import APIStatusError, Cloudflare
 
-from .cf_records import MANAGED_TYPES, ManagedRecord
+from .cf_records import MANAGED_TYPES, ManagedRecord, RecordAlreadyExists
 
 # 新建记录的 TTL（秒）：只属于 Cloudflare 的参数，留在本实现里
 DEFAULT_TTL = 300
+
+# 「内容完全相同的记录已存在」的两个错误码：81057 "Record already exists."、
+# 81058 "A record with identical settings already exists."。certbot 对这两个码同样按成功兜底
+# （https://github.com/certbot/certbot/pull/10725），场景是并发运行里别人先建好了。
+DUPLICATE_RECORD_CODES = frozenset({81057, 81058})
+
+
+def _duplicate_record_code(error):
+    """取出「记录已存在」类的错误码；不是这类错误返回 None。
+
+    错误码只存在于响应体里：SDK 5.1.0 的 ``str(error)`` 只有 message 文本，异常对象也没有
+    ``.code`` 属性，所以判据必须读 ``error.body["errors"][*]["code"]``，不能匹配文案（文案随
+    API 版本变，且 81057/81058 的措辞并不稳定）。
+
+    Args:
+        error: 记录存储的写操作抛出的异常
+
+    Returns:
+        int | None: 81057 / 81058，或 None（不是这类错误）
+    """
+    if not isinstance(error, APIStatusError):
+        return None
+    body = error.body
+    if not isinstance(body, dict):
+        return None
+    errors = body.get("errors")
+    if not isinstance(errors, list):
+        return None
+    for item in errors:
+        if isinstance(item, dict) and item.get("code") in DUPLICATE_RECORD_CODES:
+            return item["code"]
+    return None
 
 
 class CloudflareRecordStore:
@@ -91,18 +123,26 @@ class CloudflareRecordStore:
             None: 成功即返回，失败抛异常
 
         Raises:
-            cloudflare.APIError: Cloudflare 接口报错
+            RecordAlreadyExists: Cloudflare 报告「内容完全相同的记录已存在」（81057/81058）
+            cloudflare.APIError: 其余 Cloudflare 接口报错
         """
         current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        self._client_instance().dns.records.create(
-            zone_id=self._zone_id,
-            name=name,
-            content=content,
-            ttl=DEFAULT_TTL,
-            type=record_type,
-            proxied=proxied,
-            comment=current_time,
-        )
+        try:
+            self._client_instance().dns.records.create(
+                zone_id=self._zone_id,
+                name=name,
+                content=content,
+                ttl=DEFAULT_TTL,
+                type=record_type,
+                proxied=proxied,
+                comment=current_time,
+            )
+        except APIStatusError as error:
+            code = _duplicate_record_code(error)
+            if code is None:
+                raise
+            # 翻成领域异常：判据（错误码）留在本层，怎么处理由同步层决定
+            raise RecordAlreadyExists(str(error), code) from error
         print(
             f"新增记录成功: ---- 时间: {current_time} ---- "
             f"ip:{content}（类型: {record_type}，代理: {proxied}）"

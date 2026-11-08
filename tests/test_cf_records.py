@@ -14,10 +14,10 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from cloudflare import Cloudflare
+from cloudflare import APIStatusError, Cloudflare
 
 from cf_yx_dns import cf_record_store, cf_records
-from cf_yx_dns.cf_records import DnsSyncError, ManagedRecord, SyncPlan
+from cf_yx_dns.cf_records import DnsSyncError, ManagedRecord, RecordAlreadyExists, SyncPlan
 
 NAME = "dns.example.com"
 
@@ -33,19 +33,30 @@ class FakeRecordStore:
         create_error: 触发时 ``create_record`` 抛出的异常
         delete_error: 触发时 ``delete_record`` 抛出的异常
         create_error_by_type: 按记录类型触发的异常，用于构造「部分类型新增失败」
+        list_error: 触发时 ``list_records`` 抛出的异常
     """
 
-    def __init__(self, existing_records=(), create_error=None, delete_error=None, create_error_by_type=None):
+    def __init__(
+        self,
+        existing_records=(),
+        create_error=None,
+        delete_error=None,
+        create_error_by_type=None,
+        list_error=None,
+    ):
         self.existing_records = list(existing_records)
         self.create_error = create_error
         self.delete_error = delete_error
         self.create_error_by_type = dict(create_error_by_type or {})
+        self.list_error = list_error
         self.events = []
         self.created = []
         self.deleted = []
 
     def list_records(self, name):
         self.events.append("list")
+        if self.list_error is not None:
+            raise self.list_error
         return list(self.existing_records)
 
     def create_record(self, name, record_type, content, *, proxied=False):
@@ -288,6 +299,65 @@ class TestApplySync:
         assert store.created == []
 
 
+# --- apply_sync：撞上「记录已存在」（#9）-----------------------------------
+
+
+class TestApplySyncDuplicateRecord:
+    """重叠运行下「要新增的记录已经在了」不该被当成失败（issue #9）。"""
+
+    def test_identical_existing_record_counts_as_success_and_deletes(self):
+        """复查到设置一致的记录即视为成功，并照常执行删除阶段（这一轮就收敛）。"""
+        plan = SyncPlan(
+            to_create=["104.16.2.2"],
+            to_delete=[make_record(content="104.16.1.1")],
+            proxied_by_type={"A": False},
+        )
+        store = FakeRecordStore(
+            [make_record(record_id="rec-9", content="104.16.2.2")],
+            create_error=RecordAlreadyExists("A record with identical settings already exists.", 81058),
+        )
+
+        messages = cf_records.apply_sync(NAME, plan, store)
+
+        assert messages == [
+            f"ip:104.16.2.2 已存在 {NAME}（Cloudflare 81058），视为成功",
+            "ip:104.16.1.1 删除旧记录成功",
+        ]
+        assert not any(message.startswith("失败: ") for message in messages)
+        assert store.deleted == ["rec-1"]  # 删除阶段没有被跳过
+
+    def test_settings_differ_keeps_it_a_failure(self):
+        """同名同内容但 proxied 不同：目标没达成，不能吞，也不能删。"""
+        plan = SyncPlan(
+            to_create=["104.16.2.2"],
+            to_delete=[make_record(content="104.16.1.1")],
+            proxied_by_type={"A": False},
+        )
+        store = FakeRecordStore(
+            [make_record(record_id="rec-9", content="104.16.2.2", proxied=True)],
+            create_error=RecordAlreadyExists("Record already exists.", 81057),
+        )
+
+        messages = cf_records.apply_sync(NAME, plan, store)
+
+        assert messages[0] == f"失败: ip:104.16.2.2 新增 {NAME} 失败 - Record already exists."
+        assert messages[1] == "跳过: 新增阶段存在失败，本次不删除 1 条旧记录（保持现有解析，待下次执行收敛）"
+        assert store.deleted == []
+
+    def test_recheck_failure_keeps_it_a_failure(self):
+        """复查本身报错时无法确认状态：按失败处理，宁可报红一次。"""
+        plan = SyncPlan(to_create=["104.16.2.2"], proxied_by_type={"A": False})
+        store = FakeRecordStore(
+            [make_record(record_id="rec-9", content="104.16.2.2")],
+            create_error=RecordAlreadyExists("Record already exists.", 81057),
+            list_error=RuntimeError("list boom"),
+        )
+
+        messages = cf_records.apply_sync(NAME, plan, store)
+
+        assert messages == [f"失败: ip:104.16.2.2 新增 {NAME} 失败 - Record already exists."]
+
+
 # --- Cloudflare 记录存储实现 ----------------------------------------------
 
 
@@ -383,6 +453,51 @@ class TestCloudflareRecordStore:
         assert body["ttl"] == 300
         assert body["proxied"] is True
         assert body["comment"].strip()  # 新建记录带时间戳注释
+
+    def test_create_maps_duplicate_error_codes_to_domain_error(self, monkeypatch):
+        """81057/81058 翻成 RecordAlreadyExists；判据读响应体错误码，不匹配文案。"""
+        for code in (81057, 81058):
+            monkeypatch.setattr(
+                cf_record_store,
+                "Cloudflare",
+                lambda api_token, code=code: Cloudflare(
+                    api_token=api_token,
+                    http_client=httpx.Client(transport=httpx.MockTransport(_error_handler(code))),
+                ),
+            )
+            store = cf_record_store.CloudflareRecordStore(api_token="token", zone_id="zone-id")
+
+            with pytest.raises(RecordAlreadyExists) as excinfo:
+                store.create_record(NAME, "A", "104.16.2.2", proxied=False)
+
+            assert excinfo.value.code == code
+
+    def test_create_reraises_other_api_errors(self, monkeypatch):
+        """其它错误码原样抛出，不能被当成「已存在」。"""
+        monkeypatch.setattr(
+            cf_record_store,
+            "Cloudflare",
+            lambda api_token: Cloudflare(
+                api_token=api_token,
+                http_client=httpx.Client(transport=httpx.MockTransport(_error_handler(9109))),
+            ),
+        )
+        store = cf_record_store.CloudflareRecordStore(api_token="token", zone_id="zone-id")
+
+        with pytest.raises(APIStatusError) as excinfo:
+            store.create_record(NAME, "A", "104.16.2.2", proxied=False)
+
+        assert not isinstance(excinfo.value, RecordAlreadyExists)
+
+
+def _error_handler(code):
+    """返回固定错误码的 400 响应。"""
+
+    def handler(request):
+        body = {"success": False, "errors": [{"code": code, "message": "…"}], "messages": [], "result": None}
+        return httpx.Response(400, json=body)
+
+    return handler
 
 
 def _payload(record_id, content, record_type, proxied):

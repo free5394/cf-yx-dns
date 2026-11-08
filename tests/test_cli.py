@@ -53,6 +53,19 @@ def _managed_record(content):
     return cf_records.ManagedRecord(id="rec-x", name=NAME, type="A", content=content, proxied=False)
 
 
+class _DuplicateRecordStore:
+    """只实现 apply_sync 用到的两个操作：建记录必报「已存在」，列记录返回那条记录。"""
+
+    def __init__(self, record):
+        self.record = record
+
+    def list_records(self, name):
+        return [self.record]
+
+    def create_record(self, name, record_type, content, *, proxied=False):
+        raise cf_records.RecordAlreadyExists("A record with identical settings already exists.", 81058)
+
+
 class TestPreconditions:
     def test_dry_run_and_check_are_mutually_exclusive(self, monkeypatch):
         monkeypatch.setattr(cli.notify, "push_plus", _forbid_push)
@@ -218,6 +231,23 @@ class TestRealRun:
         monkeypatch.setattr(cli.notify, "push_plus", _forbid_push)
 
         assert cli.main([]) == 0
+
+    def test_duplicate_record_exits_0(self, monkeypatch, env, capsys):
+        """重叠运行撞上「记录已存在」：目标已达成，退出码 0 且推送里没有失败项（issue #9）。"""
+        stub_source(monkeypatch)
+        stub_plan(monkeypatch, make_plan(["104.16.2.2"]))
+        monkeypatch.setattr(
+            cli.cf_record_store,
+            "CloudflareRecordStore",
+            lambda **kwargs: _DuplicateRecordStore(_managed_record("104.16.2.2")),
+        )
+        pushed = {}
+        monkeypatch.setattr(cli.notify, "push_plus", lambda content, **kwargs: pushed.update(content=content))
+
+        assert cli.main([]) == 0
+        assert "视为成功" in pushed["content"]
+        assert "失败" not in pushed["content"]
+        assert "DNS 操作失败" not in capsys.readouterr().err
 
     def test_push_failure_warns_on_stderr_but_exits_0(self, monkeypatch, env, capsys):
         """推送失败不改退出码（GLOSSARY「推送通道」），但必须在 stderr 留一条总结警告。"""
