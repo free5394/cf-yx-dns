@@ -63,7 +63,7 @@ class _DuplicateRecordStore:
         return [self.record]
 
     def create_record(self, name, record_type, content, *, proxied=False):
-        raise cf_records.RecordAlreadyExists("A record with identical settings already exists.", 81058)
+        raise cf_records.RecordAlreadyExists("An identical record already exists.", 81058)
 
 
 class TestPreconditions:

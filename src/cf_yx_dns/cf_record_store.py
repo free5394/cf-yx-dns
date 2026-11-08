@@ -23,10 +23,13 @@ from .cf_records import MANAGED_TYPES, ManagedRecord, RecordAlreadyExists
 # 新建记录的 TTL（秒）：只属于 Cloudflare 的参数，留在本实现里
 DEFAULT_TTL = 300
 
-# 「内容完全相同的记录已存在」的两个错误码：81057 "Record already exists."、
-# 81058 "A record with identical settings already exists."。certbot 对这两个码同样按成功兜底
-# （https://github.com/certbot/certbot/pull/10725），场景是并发运行里别人先建好了。
-DUPLICATE_RECORD_CODES = frozenset({81057, 81058})
+# 「内容完全相同的记录已存在」的错误码：81058。生产实测（issue #6，专用测试名
+# f1-probe.seismic.ccwu.cc）里 type+name+content+proxied 全同的重复创建返回
+# HTTP 400 / ``errors[0].code = 81058`` / "An identical record already exists."。
+#
+# 81057 "Record already exists." 的语义**尚未实测**（certbot 把它与 81058 并列按成功兜底，
+# 但那是猜的）：不纳入判据，抛出去才是对的。真要用，先补一次实测。
+DUPLICATE_RECORD_CODES = frozenset({81058})
 
 
 def _duplicate_record_code(error):
@@ -34,13 +37,15 @@ def _duplicate_record_code(error):
 
     错误码只存在于响应体里：SDK 5.1.0 的 ``str(error)`` 只有 message 文本，异常对象也没有
     ``.code`` 属性，所以判据必须读 ``error.body["errors"][*]["code"]``，不能匹配文案（文案随
-    API 版本变，且 81057/81058 的措辞并不稳定）。
+    API 版本变，实测文案与 certbot 注释里的措辞就不一致）。
+
+    遍历全部 ``errors`` 而不是只看第 0 条：一次响应理论上可以带多条错误，任一条命中判据即可。
 
     Args:
         error: 记录存储的写操作抛出的异常
 
     Returns:
-        int | None: 81057 / 81058，或 None（不是这类错误）
+        int | None: 81058，或 None（不是这类错误）
     """
     if not isinstance(error, APIStatusError):
         return None
@@ -123,7 +128,7 @@ class CloudflareRecordStore:
             None: 成功即返回，失败抛异常
 
         Raises:
-            RecordAlreadyExists: Cloudflare 报告「内容完全相同的记录已存在」（81057/81058）
+            RecordAlreadyExists: Cloudflare 报告「内容完全相同的记录已存在」（81058）
             cloudflare.APIError: 其余 Cloudflare 接口报错
         """
         current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())

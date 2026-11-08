@@ -12,7 +12,7 @@
 不存在「返回错误字符串却被当成成功」的中间态；新增阶段出现失败时删除阶段整体跳过，
 避免这次同步对记录名做减法。
 
-例外是「内容完全相同的记录已存在」（Cloudflare 81057/81058）：那说明目标状态已经达成，
+例外是「内容完全相同的记录已存在」（Cloudflare 81058）：那说明目标状态已经达成，
 记录存储把它翻成 ``RecordAlreadyExists``，同步层复查到设置一致的记录后按成功处理。
 """
 
@@ -29,14 +29,14 @@ class DnsSyncError(RuntimeError):
 
 
 class RecordAlreadyExists(RuntimeError):
-    """记录存储报告「内容完全相同的记录已存在」（Cloudflare 81057/81058）。
+    """记录存储报告「内容完全相同的记录已存在」（Cloudflare 81058）。
 
     由记录存储实现抛出（它才认识 SDK 的错误码），同步层据此判断「目标状态已达成」而不是
     「新增失败」——重叠运行下这一轮算出的新增，另一轮可能已经建好了。
 
     Args:
         message: 原始报错文本
-        code: Cloudflare 错误码（81057 / 81058）
+        code: Cloudflare 错误码（81058）
     """
 
     def __init__(self, message, code):
@@ -104,6 +104,11 @@ def _canonical_create_target(name, ip):
     return ips.record_type(addr), str(addr)
 
 
+def _content_key(value):
+    """内容在身份键里的规范化形式：合法 IP 取规范写法，非 IP（历史遗留）退回原始字符串。"""
+    return ips.canonicalize(value) or value
+
+
 def _comparison_key(record):
     """记录的身份键：记录类型 + 规范化 IP。
 
@@ -119,7 +124,7 @@ def _comparison_key(record):
     Returns:
         tuple: (记录类型, 规范化内容)
     """
-    return (record.type, ips.canonicalize(record.content) or record.content)
+    return (record.type, _content_key(record.content))
 
 
 def _target_key(ip):
@@ -135,7 +140,7 @@ def _target_key(ip):
         tuple: (记录类型, 规范化 IP)；IP 非法时类型为 None，不会匹配任何现有记录，
             随后在建记录阶段被 ``_canonical_create_target`` 判为失败
     """
-    return (ips.record_type(ips.parse_ip(ip)), ips.canonicalize(ip) or ip)
+    return (ips.record_type(ips.parse_ip(ip)), _content_key(ip))
 
 
 def compute_diff(existing_records, target_ips):
@@ -153,7 +158,7 @@ def compute_diff(existing_records, target_ips):
     Returns:
         tuple[list[str], list[ManagedRecord]]: (待新增 IP 列表, 待删除记录列表)
     """
-    target = list(dict.fromkeys(ips.canonicalize(ip) or ip for ip in target_ips))
+    target = list(dict.fromkeys(_content_key(ip) for ip in target_ips))
     target_keys = {_target_key(ip) for ip in target}
     existing_keys = {_comparison_key(record) for record in existing_records}
     to_create = [ip for ip in target if _target_key(ip) not in existing_keys]
@@ -208,15 +213,15 @@ def plan_sync(name, target_ips, store):
     return SyncPlan(to_create=to_create, to_delete=to_delete, proxied_by_type=proxied_by_type)
 
 
-def _find_identical_record(store, name, record_type, content, proxied):
-    """复查记录名下的现有记录，找出与目标完全一致（类型 + 内容 + proxied）的那一条。
+def _has_identical_record(store, name, record_type, content, proxied):
+    """复查记录名下的现有记录里，有没有与目标完全一致（类型 + 内容 + proxied）的一条。
 
     ``RecordAlreadyExists`` 只说明「有一条同内容记录」，Cloudflare 81058 的文案虽然写着
     "identical settings"，但错误码契约不等于设置一定一致：若 API 对「内容相同、proxied 不同」
     也回同一个码，直接当成功就会掩盖「目标其实没达成」。所以吞掉之前先看一眼实际记录。
 
-    复查本身失败（列记录报错）时返回 None —— 无法确认就按失败处理，宁可报红一次，也不要把
-    未知状态记成成功。
+    复查本身失败（列记录报错）时返回 False —— 无法确认就按失败处理（fail-closed），宁可
+    报红一次，也不要把未知状态记成成功。
 
     Args:
         store: 记录存储（用到「列出记录名下的管辖记录」这一操作）
@@ -226,17 +231,14 @@ def _find_identical_record(store, name, record_type, content, proxied):
         proxied: 目标记录的 proxied 取值
 
     Returns:
-        ManagedRecord | None: 完全一致的那条记录；没有则 None
+        bool: 存在完全一致的记录时为 True
     """
-    target = (record_type, ips.canonicalize(content) or content, proxied)
+    target = (record_type, _content_key(content), proxied)
     try:
         records = store.list_records(name)
     except Exception:
-        return None
-    for record in records:
-        if (record.type, ips.canonicalize(record.content) or record.content, record.proxied) == target:
-            return record
-    return None
+        return False
+    return any((record.type, _content_key(record.content), record.proxied) == target for record in records)
 
 
 def apply_sync(name, plan, store):
@@ -255,7 +257,7 @@ def apply_sync(name, plan, store):
     消息在此一次性产出最终文案（失败消息自带「失败: 」前缀），推送内容只有一个来源，
     CLI 不再二次加工。
 
-    例外是「内容完全相同的记录已存在」（Cloudflare 81057/81058，由记录存储翻成
+    例外是「内容完全相同的记录已存在」（Cloudflare 81058，由记录存储翻成
     ``RecordAlreadyExists``）：那说明目标状态已经达成 —— 重叠运行下这一轮要新增的记录，
     另一轮可能刚建好。此时复查到设置一致的记录就按成功处理、不置 ``create_failed``，
     删除阶段照常执行，让这一轮就收敛，而不是白等一轮。复查不通过（记录不存在或设置不同）
@@ -264,7 +266,7 @@ def apply_sync(name, plan, store):
     Args:
         name: DNS 记录名
         plan: ``plan_sync`` 算出的计划
-        store: 记录存储（用到「新建一条记录」与「删除一条记录」两个操作）
+        store: 记录存储（用到「列出记录名下的管辖记录」「新建一条记录」「删除一条记录」三个操作）
 
     Returns:
         list[str]: 最终消息列表（成功与失败按发生顺序混排，失败自带前缀；
@@ -276,11 +278,15 @@ def apply_sync(name, plan, store):
     for ip in plan.to_create:
         try:
             record_type, content = _canonical_create_target(name, ip)
-            proxied = plan.proxied_by_type.get(record_type, False)
+        except Exception as e:
+            messages.append(f"失败: ip:{ip} 新增 {name} 失败 - {e}")
+            create_failed = True
+            continue
+        proxied = plan.proxied_by_type.get(record_type, False)
+        try:
             store.create_record(name, record_type, content, proxied=proxied)
         except RecordAlreadyExists as error:
-            proxied = plan.proxied_by_type.get(record_type, False)
-            if _find_identical_record(store, name, record_type, content, proxied) is None:
+            if not _has_identical_record(store, name, record_type, content, proxied):
                 messages.append(f"失败: ip:{ip} 新增 {name} 失败 - {error}")
                 create_failed = True
                 continue

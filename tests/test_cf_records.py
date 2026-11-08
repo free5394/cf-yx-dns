@@ -314,7 +314,7 @@ class TestApplySyncDuplicateRecord:
         )
         store = FakeRecordStore(
             [make_record(record_id="rec-9", content="104.16.2.2")],
-            create_error=RecordAlreadyExists("A record with identical settings already exists.", 81058),
+            create_error=RecordAlreadyExists("An identical record already exists.", 81058),
         )
 
         messages = cf_records.apply_sync(NAME, plan, store)
@@ -335,12 +335,12 @@ class TestApplySyncDuplicateRecord:
         )
         store = FakeRecordStore(
             [make_record(record_id="rec-9", content="104.16.2.2", proxied=True)],
-            create_error=RecordAlreadyExists("Record already exists.", 81057),
+            create_error=RecordAlreadyExists("An identical record already exists.", 81058),
         )
 
         messages = cf_records.apply_sync(NAME, plan, store)
 
-        assert messages[0] == f"失败: ip:104.16.2.2 新增 {NAME} 失败 - Record already exists."
+        assert messages[0] == f"失败: ip:104.16.2.2 新增 {NAME} 失败 - An identical record already exists."
         assert messages[1] == "跳过: 新增阶段存在失败，本次不删除 1 条旧记录（保持现有解析，待下次执行收敛）"
         assert store.deleted == []
 
@@ -349,13 +349,13 @@ class TestApplySyncDuplicateRecord:
         plan = SyncPlan(to_create=["104.16.2.2"], proxied_by_type={"A": False})
         store = FakeRecordStore(
             [make_record(record_id="rec-9", content="104.16.2.2")],
-            create_error=RecordAlreadyExists("Record already exists.", 81057),
+            create_error=RecordAlreadyExists("An identical record already exists.", 81058),
             list_error=RuntimeError("list boom"),
         )
 
         messages = cf_records.apply_sync(NAME, plan, store)
 
-        assert messages == [f"失败: ip:104.16.2.2 新增 {NAME} 失败 - Record already exists."]
+        assert messages == [f"失败: ip:104.16.2.2 新增 {NAME} 失败 - An identical record already exists."]
 
 
 # --- Cloudflare 记录存储实现 ----------------------------------------------
@@ -454,23 +454,39 @@ class TestCloudflareRecordStore:
         assert body["proxied"] is True
         assert body["comment"].strip()  # 新建记录带时间戳注释
 
-    def test_create_maps_duplicate_error_codes_to_domain_error(self, monkeypatch):
-        """81057/81058 翻成 RecordAlreadyExists；判据读响应体错误码，不匹配文案。"""
-        for code in (81057, 81058):
-            monkeypatch.setattr(
-                cf_record_store,
-                "Cloudflare",
-                lambda api_token, code=code: Cloudflare(
-                    api_token=api_token,
-                    http_client=httpx.Client(transport=httpx.MockTransport(_error_handler(code))),
-                ),
-            )
-            store = cf_record_store.CloudflareRecordStore(api_token="token", zone_id="zone-id")
+    def test_create_maps_duplicate_error_code_to_domain_error(self, monkeypatch):
+        """81058 翻成 RecordAlreadyExists；判据读响应体错误码，不匹配文案。"""
+        monkeypatch.setattr(
+            cf_record_store,
+            "Cloudflare",
+            lambda api_token: Cloudflare(
+                api_token=api_token,
+                http_client=httpx.Client(transport=httpx.MockTransport(_error_handler(81058))),
+            ),
+        )
+        store = cf_record_store.CloudflareRecordStore(api_token="token", zone_id="zone-id")
 
-            with pytest.raises(RecordAlreadyExists) as excinfo:
-                store.create_record(NAME, "A", "104.16.2.2", proxied=False)
+        with pytest.raises(RecordAlreadyExists) as excinfo:
+            store.create_record(NAME, "A", "104.16.2.2", proxied=False)
 
-            assert excinfo.value.code == code
+        assert excinfo.value.code == 81058
+
+    def test_create_reraises_unmeasured_duplicate_code(self, monkeypatch):
+        """81057 的语义没实测过（#6 只确认了 81058）：不按猜的语义并列进判据，原样抛出。"""
+        monkeypatch.setattr(
+            cf_record_store,
+            "Cloudflare",
+            lambda api_token: Cloudflare(
+                api_token=api_token,
+                http_client=httpx.Client(transport=httpx.MockTransport(_error_handler(81057))),
+            ),
+        )
+        store = cf_record_store.CloudflareRecordStore(api_token="token", zone_id="zone-id")
+
+        with pytest.raises(APIStatusError) as excinfo:
+            store.create_record(NAME, "A", "104.16.2.2", proxied=False)
+
+        assert not isinstance(excinfo.value, RecordAlreadyExists)
 
     def test_create_reraises_other_api_errors(self, monkeypatch):
         """其它错误码原样抛出，不能被当成「已存在」。"""
@@ -488,6 +504,48 @@ class TestCloudflareRecordStore:
             store.create_record(NAME, "A", "104.16.2.2", proxied=False)
 
         assert not isinstance(excinfo.value, RecordAlreadyExists)
+
+
+    def test_duplicate_error_from_api_is_success_through_apply_sync(self, monkeypatch):
+        """端到端：真实 SDK 异常（响应体带 81058）穿过适配器后按成功处理，不进「失败: 」。"""
+        monkeypatch.setattr(
+            cf_record_store,
+            "Cloudflare",
+            lambda api_token: Cloudflare(
+                api_token=api_token,
+                http_client=httpx.Client(transport=httpx.MockTransport(_duplicate_record_handler())),
+            ),
+        )
+        store = cf_record_store.CloudflareRecordStore(api_token="token", zone_id="zone-id")
+        plan = SyncPlan(
+            to_create=["104.16.2.2"],
+            to_delete=[ManagedRecord("a-1", NAME, "A", "104.16.1.1", False)],
+            proxied_by_type={"A": False},
+        )
+
+        messages = cf_records.apply_sync(NAME, plan, store)
+
+        assert messages == [
+            f"ip:104.16.2.2 已存在 {NAME}（Cloudflare 81058），视为成功",
+            "ip:104.16.1.1 删除旧记录成功",
+        ]
+
+
+def _duplicate_record_handler():
+    """列表里已有同内容记录、建记录返回 81058 的响应集合。"""
+
+    def handler(request):
+        if request.method == "POST":
+            return _error_handler(81058)(request)
+        if request.method == "DELETE":
+            return httpx.Response(200, json=_envelope({"id": "a-1"}))
+        params = dict(request.url.params)
+        page = int(params.get("page", 1))
+        is_first_a_page = params.get("type") == "A" and page == 1
+        records = [_payload("a-9", "104.16.2.2", "A", False)] if is_first_a_page else []
+        return httpx.Response(200, json=_envelope(records, _result_info(page)))
+
+    return handler
 
 
 def _error_handler(code):
