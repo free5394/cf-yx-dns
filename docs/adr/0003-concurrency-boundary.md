@@ -29,11 +29,11 @@
 
 **前提修正：内容完全相同的重复记录在 Cloudflare 侧创建就会被拒绝，所以「重复记录会一直留着」这个表述不成立。**
 
-背景段与「后果」第 2 条都建立在「重复记录能被创建出来」这个前提上。这个前提当时没有一手依据，现在有了反证：Cloudflare 对同 name + type + content（+ settings）的重复创建返回 `81057`（"Record already exists."）与 `81058`（"A record with identical settings already exists."）——依据是 certbot 自 [#10725](https://github.com/certbot/certbot/pull/10725)（2026-08-11 合并）起把这两个错误码当成功处理，注释点明触发场景包括「a concurrent certbot invocation created the record first」。官方文档只限制 CNAME 冲突，并明确一个记录名下允许多条 A/AAAA（[records-with-same-name](https://developers.cloudflare.com/dns/manage-dns-records/troubleshooting/records-with-same-name/)）。**未实测项**：certbot 的实测场景是 TXT，A 记录上是否同样拒绝重复尚未在生产验证。
+背景段与「后果」第 2 条都建立在「重复记录能被创建出来」这个前提上。这个前提当时没有一手依据，现在有了反证：Cloudflare 对同 name + type + content（+ settings）的重复创建返回 `81057`（"Record already exists."）与 `81058`（"A record with identical settings already exists."）——依据是 certbot 自 [#10725](https://github.com/certbot/certbot/pull/10725)（2026-08-11 合并）起把这两个错误码当成功处理，注释点明触发场景包括「a concurrent certbot invocation created the record first」。官方文档只限制 CNAME 冲突，并明确一个记录名下允许多条 A/AAAA（[records-with-same-name](https://developers.cloudflare.com/dns/manage-dns-records/troubleshooting/records-with-same-name/)）。**已实测**（issue #6，2026-11-08，生产 zone 的专用测试记录名 `f1-probe.seismic.ccwu.cc`）：A 记录上同 name + type + content + proxied 重复创建返回 `81058` / `HTTP 400` / "An identical record already exists."。同段列出的 `81057`（"Record already exists."）语义仍未实测——它只是 certbot 常量里的描述，不要当成本仓库的实测事实（判据取舍见 ADR 0002「修订（2026-11-08）」）。
 
 由此：
 
 - 决策 3 与「后果」第 2 条里「接受可能产生的重复记录并手工清理」「需要人工删除」这项负担，在 A/AAAA 上大概率不存在；对应的清理能力**决定不做**（`--prune-duplicates`，结论见 issue #5）。触发条件是「实测证明确实能造出重复记录」或「线上第一次观察到重复」，届时再回来评估。
-- 重叠窗口的真实代价因此不是脏数据，而是**幂等成功被报成失败**：第二轮 create 撞上 81057/81058 会让整轮判红、跳过删除阶段并推一条失败通知，而目标状态其实已经达成。这条另立 issue #9 跟踪。
+- 重叠窗口的真实代价因此不是脏数据，而是**幂等成功被报成失败**：第二轮 create 撞上 81058 会让整轮判红、跳过删除阶段并推一条失败通知，而目标状态其实已经达成。这条另立 issue #9 跟踪（`81057` 语义未实测、未进判据，见 ADR 0002；#9 已按 81058 判幂等成功并照常执行删除阶段，`d3b7f97` 起不再误判）。
 - 决策 1、2、4、5、6 不受影响：串行、单 pending、超时兜底、不做分布式锁、不做取消告警这五条与重复记录是否存在无关。
 - 若将来实测推翻本修订（A 记录允许重复创建），恢复背景段与「后果」第 2 条的原表述，并重新评估 #5 的结论。
