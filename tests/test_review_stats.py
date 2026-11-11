@@ -33,7 +33,9 @@ GOOD_TABLE = """
 | F2 | P3 | 表述 | `tools/review_stats.py:9` | 措辞含混 | 已修 `fff1111` |
 """
 
-GOOD_TEXT = GOOD_HEAD + GOOD_TABLE
+JUDGEMENT_SECTION = "\n## 判定结论\n\n范围不通过，需按 finding 返工。\n"
+
+GOOD_TEXT = GOOD_HEAD + GOOD_TABLE + JUDGEMENT_SECTION
 
 FINDING_HEADER = "| 编号 | 严重度 | 类别 | 位置 | 问题 | 处置 |"
 FINDING_SEPARATOR = "| --- | --- | --- | --- | --- | --- |"
@@ -79,6 +81,17 @@ class TestParseReport:
 
         assert any("评审范围" in problem for problem in report.problems)
 
+    def test_short_object_commit_is_a_problem(self):
+        report = parse(GOOD_TEXT.replace("abc1234def5678901234567890123456789012ab", "abc1234"))
+
+        assert any("40 位" in problem for problem in report.problems)
+
+    def test_backticked_category_still_counts(self):
+        report = parse(GOOD_TEXT.replace("| F1 | P1 | 口径不符 |", "| F1 | P1 | `口径不符` |"))
+
+        assert report.problems == ()
+        assert report.mismatch_count == 1
+
     def test_unknown_severity_is_a_problem(self):
         report = parse(GOOD_TEXT.replace("| F1 | P1 |", "| F1 | 高 |"))
 
@@ -95,8 +108,13 @@ class TestParseReport:
 
         assert any("finding" in problem for problem in report.problems)
 
+    def test_missing_verdict_section_is_a_problem(self):
+        report = parse(GOOD_TEXT.replace("## 判定结论", "## 结论"))
+
+        assert any("判定结论" in problem for problem in report.problems)
+
     def test_report_with_no_finding_row_is_valid(self):
-        report = parse(GOOD_HEAD + "\n## 逐条 finding\n\n" + findings_table() + "\n")
+        report = parse(GOOD_HEAD + "\n## 逐条 finding\n\n" + findings_table() + JUDGEMENT_SECTION)
 
         assert report.problems == ()
         assert report.findings == ()
@@ -117,7 +135,9 @@ class TestSummarize:
     def test_numerators_come_from_verdict_and_category(self):
         rework = parse()
         passed_text = GOOD_HEAD.replace("- 判定：打回", "- 判定：通过")
-        passed = parse(passed_text + "\n## 逐条 finding\n\n" + findings_table() + "\n", "20261111-bbb2222.md")
+        passed = parse(
+            passed_text + "\n## 逐条 finding\n\n" + findings_table() + JUDGEMENT_SECTION, "20261111-bbb2222.md"
+        )
 
         summary = review_stats.summarize([rework, passed])
 
@@ -126,6 +146,26 @@ class TestSummarize:
         assert summary["findings_total"] == 2
         assert summary["mismatch_numerator"] == 1
         assert summary["severity_counts"] == {"P1": 1, "P3": 1}
+
+
+class TestFormatSummary:
+    def test_per_report_severity_is_not_the_total(self):
+        first = parse()
+        second_text = (
+            GOOD_HEAD.replace("- 判定：打回", "- 判定：通过")
+            + "\n## 逐条 finding\n\n"
+            + findings_table("| F3 | P0 | 缺陷 | `x.md:1` | 会崩 | 已修 |")
+            + JUDGEMENT_SECTION
+        )
+        second = parse(second_text, "20261111-bbb2222.md")
+
+        text = review_stats.format_summary([first, second], review_stats.summarize([first, second]), "全部")
+
+        first_line = next(line for line in text.splitlines() if "20261111-abc1234" in line)
+        second_line = next(line for line in text.splitlines() if "20261111-bbb2222" in line)
+        assert "P1×1" in first_line and "P0×0" in first_line
+        assert "P0×1" in second_line and "P1×0" in second_line
+        assert "严重度合计" in text
 
 
 class TestMain:
@@ -151,5 +191,4 @@ class TestMain:
 
         assert review_stats.main(["review_stats"]) == 1
         assert "归档目录不存在" in capsys.readouterr().out
-
 

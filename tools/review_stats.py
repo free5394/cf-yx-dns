@@ -1,7 +1,8 @@
 """统计 ``reviews/`` 下的复审报告（返工轮次与口径不符次数两个分子）。
 
 约定见 ``docs/agents/code-review.md``。本脚本同时是「报告合格」的机械闸门：缺元信息、
-判定值不在词表、finding 表结构不合法、目录为空时都会报错并以退出码 1 结束，不静默跳过 ——
+对象提交不是完整 40 位、判定值不在词表、缺「逐条 finding」或「判定结论」小节、
+finding 表结构不合法、目录为空时都会报错并以退出码 1 结束，不静默跳过 ——
 这两个指标当初失效的原因正是「采集入口不可执行」。
 
 用法：``uv run python tools/review_stats.py [reviews 目录或报告文件 ...]``，默认 ``reviews``；
@@ -26,9 +27,12 @@ FINDING_COLUMNS = ("编号", "严重度", "类别", "位置", "问题", "处置"
 SEVERITIES = ("P0", "P1", "P2", "P3")
 MISMATCH_CATEGORY = "口径不符"
 FINDING_HEADING = "逐条 finding"
-# 文件名：YYYYMMDD-<对象提交短哈希>[-rN].md
+JUDGEMENT_HEADING = "判定结论"
+# 文件名：YYYYMMDD-<对象提交短哈希>[-rN].md（短哈希只用在文件名里）
 FILE_NAME = re.compile(r"^(?P<date>\d{8})-(?P<commit>[0-9a-f]{7,40})(?:-r\d+)?\.md$")
-COMMIT_HASH = re.compile(r"[0-9a-f]{7,40}")
+# 正文里的对象提交必须是完整 40 位
+COMMIT_HASH = re.compile(r"[0-9a-f]{40}")
+JUDGEMENT_SECTION = re.compile(r"^#{1,6}\s*判定结论\s*$", re.M)
 META_LINE = re.compile(r"^-\s*(?P<label>[^：:]{1,12})[：:]\s*(?P<value>.+?)\s*$")
 SEPARATOR_CELLS = set("-: ")
 DEFAULT_ROOT = "reviews"
@@ -43,6 +47,25 @@ class Report:
     meta: dict = field(default_factory=dict)
     findings: tuple = ()
     problems: tuple = ()
+
+    @property
+    def verdict(self):
+        """元信息里的判定词。"""
+        return self.meta.get("判定", "")
+
+    @property
+    def severity_counts(self):
+        """本份报告自己的严重度分布（只含出现过的等级，供汇总累加）。"""
+        counts = {}
+        for finding in self.findings:
+            severity = finding["严重度"]
+            counts[severity] = counts.get(severity, 0) + 1
+        return counts
+
+    @property
+    def mismatch_count(self):
+        """本份报告里类别恰好是「口径不符」的 finding 条数（口径不符次数分子）。"""
+        return sum(1 for finding in self.findings if finding["类别"] == MISMATCH_CATEGORY)
 
 
 def _clean(value):
@@ -73,7 +96,7 @@ def _parse_findings(text, path):
     for line in lines[start:]:
         stripped = line.strip()
         if stripped.startswith("|"):
-            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+            cells = [_clean(cell) for cell in stripped.strip("|").split("|")]
             if not header_seen:
                 header_seen = True
                 if tuple(cells) != FINDING_COLUMNS:
@@ -111,12 +134,14 @@ def parse_report(text, path):
     for label in META_LABELS:
         if label not in meta:
             problems.append(f"{path}: 缺少元信息「{label}」")
-    if "对象提交" in meta and not COMMIT_HASH.search(meta["对象提交"]):
-        problems.append(f"{path}: 对象提交「{meta['对象提交']}」里没有 7 位以上的十六进制提交号")
+    if "对象提交" in meta and not COMMIT_HASH.fullmatch(meta["对象提交"]):
+        problems.append(f"{path}: 对象提交「{meta['对象提交']}」不是完整的 40 位十六进制提交号")
     if "评审范围" in meta and ".." not in meta["评审范围"]:
         problems.append(f"{path}: 评审范围「{meta['评审范围']}」不是「基点..对象提交」形式")
     if "判定" in meta and meta["判定"] not in VERDICTS:
         problems.append(f"{path}: 判定「{meta['判定']}」不在词表（{' / '.join(VERDICTS)}）")
+    if not JUDGEMENT_SECTION.search(text):
+        problems.append(f"{path}: 找不到「{JUDGEMENT_HEADING}」小节")
 
     findings, table_problems = _parse_findings(text, path)
     problems.extend(table_problems)
@@ -165,26 +190,28 @@ def all_problems(reports, path_problems):
 def summarize(reports):
     """按固定口径汇总：返工轮次看判定，口径不符次数看 finding 的类别列。"""
     severity_counts = {}
-    mismatch = 0
     for report in reports:
-        for finding in report.findings:
-            if finding["类别"] == MISMATCH_CATEGORY:
-                mismatch += 1
-            severity = finding["严重度"]
-            severity_counts[severity] = severity_counts.get(severity, 0) + 1
+        for severity, count in report.severity_counts.items():
+            severity_counts[severity] = severity_counts.get(severity, 0) + count
     return {
         "reports": len(reports),
-        "rework_numerator": sum(1 for report in reports if report.meta.get("判定") in REWORK_VERDICTS),
+        "rework_numerator": sum(1 for report in reports if report.verdict in REWORK_VERDICTS),
         "findings_total": sum(len(report.findings) for report in reports),
-        "mismatch_numerator": mismatch,
+        "mismatch_numerator": sum(report.mismatch_count for report in reports),
         "severity_counts": severity_counts,
     }
+
+
+def _severity_line(counts):
+    """按词表顺序渲染严重度分布，缺席的补 0。"""
+    return " ".join(f"{name}×{counts.get(name, 0)}" for name in SEVERITIES)
 
 
 def format_summary(reports, summary, window):
     """把报告与汇总渲染成可粘贴的文本。"""
     lines = [
         f"复审报告 {summary['reports']} 份（窗口：{window}）",
+        f"  严重度合计：{_severity_line(summary['severity_counts'])}",
         f"  返工轮次分子 = {summary['rework_numerator']} ｜ 分母 = {summary['reports']} 份报告"
         f"（口径乙：判定为「{'」「'.join(REWORK_VERDICTS)}」的报告份数）",
         f"  口径不符 finding 数 = {summary['mismatch_numerator']}"
@@ -194,12 +221,11 @@ def format_summary(reports, summary, window):
     if not reports:
         lines.append("    （没有报告；归档约定见 " + CONVENTION + "）")
     for report in reports:
-        severity = " ".join(f"{name}×{summary['severity_counts'].get(name, 0)}" for name in SEVERITIES)
-        mismatch = sum(1 for finding in report.findings if finding["类别"] == MISMATCH_CATEGORY)
         lines.append(
-            f"    {report.path.name}  判定={report.meta.get('判定', '缺')}"
+            f"    {report.path.name}  判定={report.verdict or '缺'}"
             f"  对象提交={report.meta.get('对象提交', '缺')}"
-            f"  finding {len(report.findings)} 条（其中 {MISMATCH_CATEGORY} {mismatch}；{severity}）"
+            f"  finding {len(report.findings)} 条"
+            f"（其中 {MISMATCH_CATEGORY} {report.mismatch_count}；{_severity_line(report.severity_counts)}）"
         )
     return "\n".join(lines)
 
