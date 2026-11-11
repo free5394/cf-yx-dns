@@ -192,3 +192,20 @@ class TestMain:
         assert review_stats.main(["review_stats"]) == 1
         assert "归档目录不存在" in capsys.readouterr().out
 
+
+class TestRepositoryArchive:
+    """仓库里真实的 reviews/ 必须合格，且至少有一份报告（票 #10 的验收判据 2、3）。"""
+
+    REPO_ROOT = Path(__file__).resolve().parents[1]
+
+    def test_real_archive_parses_and_has_a_report(self, capsys):
+        reports, path_problems = review_stats.collect_reports([self.REPO_ROOT / "reviews"])
+        problems = review_stats.all_problems(reports, path_problems)
+
+        assert problems == [], problems
+        assert reports, "reviews/ 下至少要有一份真实复审报告"
+
+        exit_code = review_stats.main(["review_stats", str(self.REPO_ROOT / "reviews")])
+        assert exit_code == 0, capsys.readouterr().out
+
+
